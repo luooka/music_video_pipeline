@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Video Pipeline MVP</title>
+    <style>
+        :root {
+            --bg-color: #0d0d12;
+            --glass-bg: rgba(255, 255, 255, 0.05);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --accent: #00f2fe;
+            --accent-gradient: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
+            --text-main: #ffffff;
+            --text-dim: #a0a0b8;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            height: 100vh;
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            overflow: hidden;
+        }
+
+        /* Side Panel */
+        aside {
+            background: rgba(18, 18, 24, 0.8);
+            border-right: 1px solid var(--glass-border);
+            padding: 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: 800;
+            background: var(--accent-gradient);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 20px;
+        }
+
+        .section-title {
+            font-size: 12px;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            letter-spacing: 1.5px;
+            margin-bottom: 12px;
+        }
+
+        .config-card {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            padding: 20px;
+            border-radius: 12px;
+        }
+
+        input {
+            width: 100%;
+            border: none;
+            background: rgba(0, 0, 0, 0.3);
+            color: #fff;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            outline: none;
+            border: 1px solid transparent;
+            transition: all 0.3s;
+        }
+
+        input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 10px rgba(0, 242, 254, 0.2);
+        }
+
+        button {
+            cursor: pointer;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: var(--accent-gradient);
+            color: #000;
+            width: 100%;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 242, 254, 0.3);
+        }
+
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--accent);
+            color: var(--accent);
+        }
+
+        .btn-outline:hover {
+            background: rgba(0, 242, 254, 0.1);
+        }
+
+        /* Main Content */
+        main {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            padding: 30px;
+            position: relative;
+        }
+
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        #songs-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 20px;
+            overflow-y: auto;
+            flex: 1;
+            padding-bottom: 100px;
+        }
+
+        .song-card {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            padding: 16px;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+        }
+
+        .song-card:hover {
+            border-color: var(--accent);
+            transform: scale(1.02);
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .song-card.selected {
+            border-color: var(--accent);
+            background: rgba(0, 242, 254, 0.1);
+        }
+
+        .song-card .badge {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: var(--accent);
+            color: #000;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 12px;
+            z-index: 10;
+        }
+
+        .song-card.selected .badge {
+            display: flex;
+        }
+
+        .cover-art {
+            width: 100%;
+            aspect-ratio: 1;
+            border-radius: 12px;
+            margin-bottom: 12px;
+            object-fit: cover;
+        }
+
+        .song-info .name {
+            font-weight: 700;
+            margin-bottom: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .song-info .artist {
+            font-size: 14px;
+            color: var(--text-dim);
+        }
+
+        /* Bottom Action Bar */
+        .action-bar {
+            position: absolute;
+            bottom: 30px;
+            left: 30px;
+            right: 30px;
+            background: rgba(22, 22, 30, 0.9);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: 20px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transform: translateY(150%);
+            transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            z-index: 100;
+        }
+
+        .action-bar.visible {
+            transform: translateY(0);
+        }
+
+        /* Console */
+        #console {
+            background: #000;
+            border: 1px solid #333;
+            color: #0f0;
+            font-family: monospace;
+            font-size: 12px;
+            padding: 15px;
+            border-radius: 12px;
+            height: 150px;
+            overflow-y: auto;
+            display: none;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <aside>
+        <div class="logo">网易云每日推荐</div>
+
+        <div>
+            <div class="section-title">网易云配置Cookie</div>
+            <div class="config-card">
+                <input type="password" id="cookie-input" placeholder="MUSIC_U Cookie">
+                <button class="btn-primary" onclick="saveConfig()">保存配置</button>
+            </div>
+        </div>
+
+        <div>
+            <div class="section-title">状态分析</div>
+            <div id="status-display" style="color: var(--text-dim); font-size: 14px;">准备就绪</div>
+        </div>
+
+        <div id="console-container" style="flex: 1; display: flex; flex-direction: column;">
+            <div class="section-title">实时日志</div>
+            <div id="console"></div>
+        </div>
+
+        <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--glass-border);">
+            <div class="section-title">开发者工具</div>
+            <a href="/docs" target="_blank" style="color: var(--accent); font-size: 13px; text-decoration: none; display: flex; align-items: center; gap: 5px;">
+                <span>📂 查看交互式 API 文档</span>
+                <span style="font-size: 10px;">↗</span>
+            </a>
+        </div>
+    </aside>
+
+    <main>
+        <div class="top-bar">
+            <h2>今日推荐</h2>
+            <div class="btn-group">
+                <button class="btn-outline" onclick="selectAll()" style="font-size: 13px;">全选</button>
+                <button class="btn-outline" onclick="deselectAll()" style="font-size: 13px;">清空</button>
+                <button class="btn-outline" onclick="fetchSongs()"
+                    style="background: rgba(255,255,255,0.05);">刷新</button>
+            </div>
+        </div>
+
+        <div id="songs-grid">
+            <!-- 歌曲卡片将在这里渲染 -->
+        </div>
+
+        <div class="action-bar" id="action-bar">
+            <div>已选择 <span id="select-count" style="color: var(--accent); font-weight: bold;">0</span> 首歌曲（按点击顺序排列）
+            </div>
+            <button class="btn-primary" style="width: auto; padding: 12px 40px;"
+                onclick="startGenerate()">立即合成视频</button>
+        </div>
+    </main>
+
+    <script>
+        let allSongs = [];
+        let selectedIds = []; // 改用数组记录顺序
+        const API_BASE = window.location.origin;
+
+        async function saveConfig() {
+            const cookie = document.getElementById('cookie-input').value;
+            const res = await fetch(`${API_BASE}/config`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ netease_cookie: cookie })
+            });
+            if (res.ok) alert("配置已保存");
+        }
+
+        async function fetchSongs() {
+            document.getElementById('status-display').innerText = "加载中...";
+            try {
+                const res = await fetch(`${API_BASE}/recommendations`);
+                const data = await res.json();
+                allSongs = data.songs;
+                selectedIds = [];
+                updateActionBar();
+                renderSongs();
+                document.getElementById('status-display').innerText = `已加载 ${allSongs.length} 首推荐`;
+            } catch (e) {
+                document.getElementById('status-display').innerText = "连接后端失败";
+            }
+        }
+
+        function renderSongs() {
+            const grid = document.getElementById('songs-grid');
+            grid.innerHTML = allSongs.map(s => {
+                const idx = selectedIds.indexOf(s.id);
+                return `
+                    <div class="song-card ${idx !== -1 ? 'selected' : ''}" onclick="toggleSong(${s.id})">
+                        <div class="badge">${idx + 1}</div>
+                        <img class="cover-art" src="${s.album_pic}" alt="cover">
+                        <div class="song-info">
+                            <div class="name">${s.name}</div>
+                            <div class="artist">${s.artists.join(', ')}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function toggleSong(id) {
+            const idx = selectedIds.indexOf(id);
+            if (idx !== -1) {
+                selectedIds.splice(idx, 1);
+            } else {
+                selectedIds.push(id);
+            }
+            updateActionBar();
+            renderSongs();
+        }
+
+        function selectAll() {
+            selectedIds = allSongs.map(s => s.id);
+            updateActionBar();
+            renderSongs();
+        }
+
+        function deselectAll() {
+            selectedIds = [];
+            updateActionBar();
+            renderSongs();
+        }
+
+        function updateActionBar() {
+            const bar = document.getElementById('action-bar');
+            const count = document.getElementById('select-count');
+            count.innerText = selectedIds.length;
+            if (selectedIds.length > 0) bar.classList.add('visible');
+            else bar.classList.remove('visible');
+        }
+
+        async function startGenerate() {
+            // 按照 selectedIds 的顺序排列歌曲
+            const songsToGen = selectedIds.map(id => allSongs.find(s => s.id === id)).filter(s => s);
+
+            const res = await fetch(`${API_BASE}/generate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ songs: songsToGen, combine: true })
+            });
+
+            if (res.ok) {
+                document.getElementById('console').style.display = 'block';
+                startStatusPolling();
+            }
+        }
+
+        let pollInterval;
+        function startStatusPolling() {
+            if (pollInterval) clearInterval(pollInterval);
+            pollInterval = setInterval(async () => {
+                const res = await fetch(`${API_BASE}/status`);
+                const data = await res.json();
+
+                const consoleDiv = document.getElementById('console');
+                consoleDiv.innerHTML = data.logs.map(l => `<div>> ${l}</div>`).join('');
+                consoleDiv.scrollTop = consoleDiv.scrollHeight;
+
+                if (!data.is_running) {
+                    clearInterval(pollInterval);
+                    document.getElementById('status-display').innerText = "合成大功告成！";
+                } else {
+                    document.getElementById('status-display').innerText = "正在疯狂合成中...";
+                }
+            }, 1000);
+        }
+
+        // 初始加载配置
+        async function loadInitial() {
+            try {
+                const res = await fetch(`${API_BASE}/config`);
+                const config = await res.json();
+                document.getElementById('cookie-input').value = config.netease_cookie;
+            } catch (e) { }
+        }
+        loadInitial();
+    </script>
+</body>
+
+</html>
