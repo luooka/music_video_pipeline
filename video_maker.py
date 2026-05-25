@@ -125,8 +125,10 @@ class VideoMaker:
             "-video_track_timescale", "24000",   # 统一视频轨迹时间基 (按 24fps 换算)
             "-pix_fmt", "yuv420p",
             "-shortest",
-            output_path,
         ]
+        if duration > 0:
+            cmd.extend(["-t", f"{duration:.3f}"])
+        cmd.append(output_path)
         # 增加静默参数
         cmd.insert(1, "-nostats")
         

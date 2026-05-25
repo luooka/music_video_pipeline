@@ -5,7 +5,7 @@ import sys
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, File, UploadFile
+from fastapi import FastAPI, HTTPException, File, UploadFile, Body
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -244,6 +244,91 @@ async def generate_by_query(req: QueryRequest):
         if isinstance(e, HTTPException): raise e
         raise HTTPException(status_code=500, detail=str(e))
 
+# ================== 网易云音乐扫码登录接口 ==================
+class NeteaseCheckLoginRequest(BaseModel):
+    unikey: str = Field(..., description="网易云扫码 unikey")
+
+@app.get("/netease/qrcode", summary="获取网易云登录二维码", tags=["网易云登录"])
+async def get_netease_qrcode():
+    """获取网易云登录二维码，返回图片 URL 和 unikey"""
+    try:
+        import qrcode
+        from pyncm.apis import login
+        
+        # 1. 创建网易云扫码 unikey
+        res_key = await asyncio.to_thread(login.LoginQrcodeUnikey)
+        if res_key.get("code") != 200:
+            raise Exception(f"网易云创建Unikey失败: {res_key}")
+            
+        unikey = res_key["unikey"]
+        
+        # 2. 获取扫码 URL
+        qr_url = login.GetLoginQRCodeUrl(unikey)
+        
+        # 3. 生成二维码图片并保存
+        qr_img = qrcode.make(qr_url)
+        qr_path = Path(__file__).parent / "static" / "netease_login_qr.png"
+        qr_path.parent.mkdir(parents=True, exist_ok=True)
+        qr_img.save(str(qr_path))
+        
+        return {
+            "qr_path": "/static/netease_login_qr.png",
+            "unikey": unikey
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/netease/check-login", summary="检查网易云扫码状态", tags=["网易云登录"])
+async def check_netease_login(req: NeteaseCheckLoginRequest):
+    """传入 unikey 轮询扫码状态。扫码成功后自动保存 Cookie 并应用到系统"""
+    try:
+        from pyncm.apis import login
+        from pyncm import GetCurrentSession
+        
+        # 1. 检查状态
+        res = await asyncio.to_thread(login.LoginQrcodeCheck, req.unikey)
+        code = res.get("code", 801)
+        
+        if code == 803:
+            # 授权登录成功
+            session = GetCurrentSession()
+            music_u = session.cookies.get("MUSIC_U", domain=".music.163.com") or session.cookies.get("MUSIC_U")
+            
+            if not music_u:
+                music_u = res.get("cookie", "")
+                
+            if music_u:
+                # 2. 自动保存到 config.json 配置文件
+                config = load_config()
+                config["netease_cookie"] = music_u
+                with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                    json.dump(config, f, indent=2, ensure_ascii=False)
+                
+                # 3. 重新实例化流水线处理器以便即时生效
+                state.processor = PipelineProcessor(config)
+                try:
+                    state.processor.cleanup_manager = CleanupManager(config)
+                except Exception:
+                    pass
+                    
+                return {
+                    "success": True,
+                    "status": "success",
+                    "music_u": music_u,
+                    "message": "登录成功，已自动保存配置！"
+                }
+            return {"success": False, "status": "error", "message": "授权成功但未获取到有效 MUSIC_U Cookie"}
+            
+        elif code == 802:
+            return {"success": False, "status": "authorizing", "message": "已扫码，等待确认授权..."}
+        elif code == 800:
+            return {"success": False, "status": "expired", "message": "二维码已失效，请重新生成"}
+        else:
+            return {"success": False, "status": "waiting", "message": "等待扫码中..."}
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ================== Bilibili 相关接口 ==================
 @app.get("/bilibili/qrcode", summary="获取 B 站登录二维码", tags=["B站投稿"])
 async def get_bilibili_qr():
@@ -266,7 +351,7 @@ async def get_bilibili_qr():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/bilibili/check-login", summary="检查扫码登录状态", tags=["B站投稿"])
-async def check_bilibili_login(raw_json: str):
+async def check_bilibili_login(raw_json: str = Body(...)):
     """传入 get_bilibili_qr 返回的 raw_json，检查是否扫码成功"""
     try:
         auth = BilibiliAuth()
