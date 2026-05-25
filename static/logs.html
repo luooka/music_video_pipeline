@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>视频合成生产监控大盘 - Music Video Pipeline</title>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #08080c;
+            --glass-bg: rgba(255, 255, 255, 0.03);
+            --glass-border: rgba(255, 255, 255, 0.07);
+            --accent: #00f2fe;
+            --accent-gradient: linear-gradient(135deg, #00f2fe 0%, #4facfe 50%, #9b51e0 100%);
+            --text-main: #f5f5f7;
+            --text-dim: #8e8e9f;
+            --success: hsl(142, 70%, 45%);
+            --error: hsl(350, 80%, 60%);
+            --info: hsl(195, 90%, 55%);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Plus Jakarta Sans', 'Segoe UI', system-ui, -apple-system, sans-serif !important;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        /* Frosted custom scrollbars */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        /* Top navigation */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 40px;
+            border-bottom: 1px solid var(--glass-border);
+            background: rgba(18, 18, 24, 0.6);
+            backdrop-filter: blur(20px);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo {
+            font-size: 20px;
+            font-weight: 800;
+            background: var(--accent-gradient);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .nav-links a {
+            color: var(--text-dim);
+            text-decoration: none;
+            font-size: 14px;
+            padding: 8px 16px;
+            border-radius: 8px;
+            transition: all 0.3s cubic-bezier(0.165, 0.84, 0.44, 1);
+        }
+
+        .nav-links a:hover {
+            color: var(--accent);
+            background: rgba(0, 242, 254, 0.08);
+            box-shadow: 0 4px 12px rgba(0, 242, 254, 0.1);
+        }
+
+        .nav-links a.active {
+            color: var(--accent);
+            background: rgba(0, 242, 254, 0.15);
+            box-shadow: 0 0 10px rgba(0, 242, 254, 0.2);
+        }
+
+        /* Main Dashboard layout */
+        main {
+            flex: 1;
+            padding: 40px 20px;
+            max-width: 900px;
+            width: 100%;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 30px;
+        }
+
+        .config-card {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: 30px;
+            backdrop-filter: blur(20px);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2);
+            transition: border-color 0.3s;
+        }
+
+        /* Circular glowing loader */
+        .pulsing-spinner {
+            width: 48px;
+            height: 48px;
+            border: 4px solid rgba(0, 242, 254, 0.1);
+            border-top: 4px solid var(--accent);
+            border-radius: 50%;
+            animation: rotateSpinner 1s linear infinite;
+            box-shadow: 0 0 15px rgba(0, 242, 254, 0.2);
+        }
+
+        @keyframes rotateSpinner {
+            100% { transform: rotate(360deg); }
+        }
+
+        .stepper-phases {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 20px;
+        }
+
+        .step-item {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            color: var(--text-dim);
+            padding: 12px 20px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.01);
+            border: 1px solid transparent;
+            transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
+        }
+
+        .step-item.active {
+            color: var(--accent);
+            background: rgba(0, 242, 254, 0.05);
+            border-color: rgba(0, 242, 254, 0.15);
+            box-shadow: 0 0 15px rgba(0, 242, 254, 0.08);
+            font-weight: 600;
+        }
+
+        .step-item.completed {
+            color: var(--success);
+            background: rgba(46, 204, 113, 0.04);
+            border-color: rgba(46, 204, 113, 0.1);
+        }
+
+        .step-item.failed {
+            color: var(--error);
+            background: rgba(255, 71, 87, 0.04);
+            border-color: rgba(255, 71, 87, 0.1);
+        }
+
+        .step-dot {
+            font-size: 16px;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        button {
+            cursor: pointer;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--accent);
+            color: var(--accent);
+        }
+
+        .btn-outline:hover {
+            background: rgba(0, 242, 254, 0.1);
+            box-shadow: 0 0 10px rgba(0, 242, 254, 0.15);
+        }
+
+        .btn-primary {
+            background: var(--accent-gradient);
+            color: #000;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 242, 254, 0.3);
+        }
+
+        /* Foldable Console style */
+        #console {
+            background: #050508;
+            border: 1px solid var(--glass-border);
+            color: #0f0;
+            font-family: monospace;
+            font-size: 13px;
+            padding: 20px;
+            border-radius: 12px;
+            height: 300px;
+            overflow-y: auto;
+            box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.8);
+            line-height: 1.6;
+        }
+
+        .status-idle {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 50px 20px;
+            text-align: center;
+            color: var(--text-dim);
+            gap: 15px;
+        }
+
+        /* Modal styling */
+        .completion-modal {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            backdrop-filter: blur(10px);
+        }
+        .completion-modal-content {
+            background: var(--bg-color);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 500px;
+            text-align: center;
+            box-shadow: 0 0 30px rgba(0,242,254,0.15);
+        }
+        .completion-modal-content h3 {
+            font-size: 24px;
+            margin-bottom: 20px;
+            color: var(--accent);
+        }
+        .completion-modal-content p {
+            color: var(--text-dim);
+            margin-bottom: 15px;
+            line-height: 1.6;
+        }
+        .completion-modal-content .video-link {
+            color: var(--accent);
+            word-break: break-all;
+            font-size: 14px;
+            margin: 10px 0;
+            padding: 10px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 8px;
+            border: 1px solid var(--glass-border);
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">Music Video Pipeline</div>
+        <nav class="nav-links">
+            <a href="/">合成页</a>
+            <a href="/static/logs.html" class="active">监控页</a>
+            <a href="/static/upload.html">投稿页</a>
+        </nav>
+    </header>
+
+    <main>
+        <!-- Idle Status Card (shown when no task is running) -->
+        <div id="idle-card" class="config-card" style="display: block;">
+            <div class="status-idle">
+                <div style="font-size: 40px;">🛌</div>
+                <h3 style="font-size: 20px; font-weight: 700; color: var(--text-main);">当前没有正在运行的制作任务</h3>
+                <p style="font-size: 14px; max-width: 400px; line-height: 1.6;">流水线当前处于空闲状态。请前往<a href="/" style="color: var(--accent); text-decoration: none; font-weight: 600;">【合成页】</a>挑选歌曲并一键开始生成您的专属律动歌词视频。</p>
+            </div>
+        </div>
+
+        <!-- Active Stepper Dashboard -->
+        <div id="dashboard-card" class="config-card" style="display: none; flex-direction: column; gap: 24px;">
+            <div style="display: flex; align-items: center; gap: 20px;">
+                <div class="pulsing-spinner" id="stepper-spinner"></div>
+                <div style="flex: 1; overflow: hidden;">
+                    <h3 id="stepper-current-task" style="font-size: 16px; font-weight: 700; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">准备就绪</h3>
+                    <div style="width: 100%; height: 6px; background: rgba(255,255,255,0.05); border-radius: 3px; margin-top: 8px; overflow: hidden;">
+                        <div id="stepper-progress-bar" style="width: 0%; height: 100%; background: var(--accent-gradient); transition: width 0.4s;"></div>
+                    </div>
+                </div>
+                <span id="stepper-percent" style="font-size: 16px; font-weight: 800; color: var(--text-dim);">0%</span>
+            </div>
+
+            <div class="stepper-phases">
+                <div class="step-item" id="step-1">
+                    <span class="step-dot">🔵</span>
+                    <span class="step-name">1. 解析歌曲与歌词列表 (获取歌曲元数据...)</span>
+                </div>
+                <div class="step-item" id="step-2">
+                    <span class="step-dot">🔵</span>
+                    <span class="step-name">2. 下载高保真音频文件 (对齐歌词切片...)</span>
+                </div>
+                <div class="step-item" id="step-3">
+                    <span class="step-dot">🔵</span>
+                    <span class="step-name">3. 智能波形粒子谱频渲染 (波频提取中...)</span>
+                </div>
+                <div class="step-item" id="step-4">
+                    <span class="step-dot">🔵</span>
+                    <span class="step-name">4. FFmpeg 多线程画幅压制 (线程合并压制...)</span>
+                </div>
+                <div class="step-item" id="step-5">
+                    <span class="step-dot">🔵</span>
+                    <span class="step-name">5. 自动上传与B站同步 (同步发布中...)</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Folding Technical Console Wrapper -->
+        <div id="console-card" class="config-card" style="display: none; flex-direction: column; gap: 15px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h4 style="font-size: 14px; text-transform: uppercase; color: var(--text-dim); letter-spacing: 1px;">实时流水线底层日志</h4>
+                <div style="display: flex; gap: 10px;">
+                    <button class="btn-outline" onclick="copyConsoleLogs()" style="font-size: 11px; padding: 6px 14px; border-radius: 20px;">复制日志</button>
+                    <button class="btn-outline" onclick="clearConsoleLogs()" style="font-size: 11px; padding: 6px 14px; border-radius: 20px; border-color: rgba(255, 71, 87, 0.2); color: var(--error);">清空终端</button>
+                </div>
+            </div>
+            <div id="console"></div>
+        </div>
+    </main>
+
+    <!-- Completion Modal -->
+    <div id="completion-modal" class="completion-modal" style="display:none;">
+        <div class="completion-modal-content">
+            <h3>🎉 视频合成大功告成！</h3>
+            <div id="modal-content">
+                <p>视频已成功通过流水线渲染，并在本地落盘。</p>
+                <div id="video-path" class="video-link"></div>
+                <p id="upload-info" style="font-size: 13px;"></p>
+            </div>
+            <div style="display:flex; gap:15px; margin-top:25px; justify-content: center;">
+                <button class="btn-outline" onclick="closeModal()">关闭</button>
+                <button class="btn-primary" onclick="copyVideoPath()">复制路径</button>
+                <button id="open-upload-btn" class="btn-outline" style="display:none;" onclick="openUploadPage()">去投稿</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+        let pollInterval = null;
+        let pendingAutoUpload = false;
+        let lastLogLength = 0;
+        let wasRunning = false; // 追踪是否曾经观察到任务运行中
+
+        async function checkStatus() {
+            try {
+                const res = await fetch(`${API_BASE}/status`);
+                if (!res.ok) return;
+                const data = await res.json();
+
+                const idleCard = document.getElementById('idle-card');
+                const dashboardCard = document.getElementById('dashboard-card');
+                const consoleCard = document.getElementById('console-card');
+
+                if (data.is_running) {
+                    wasRunning = true; // 标记已观察到任务运行
+                    idleCard.style.display = 'none';
+                    dashboardCard.style.display = 'flex';
+                    consoleCard.style.display = 'flex';
+
+                    // Update Console Logs
+                    const consoleDiv = document.getElementById('console');
+                    if (data.logs.length !== lastLogLength) {
+                        consoleDiv.innerHTML = data.logs.map(l => `<div>&gt; ${l}</div>`).join('');
+                        consoleDiv.scrollTop = consoleDiv.scrollHeight;
+                        lastLogLength = data.logs.length;
+                    }
+
+                    updateStepperFromLogs(data.logs);
+                } else {
+                    // 只有当之前确实观察到任务在运行时，才触发完成流程
+                    if (wasRunning) {
+                        wasRunning = false;
+                        
+                        // Final logs update
+                        const consoleDiv = document.getElementById('console');
+                        consoleDiv.innerHTML = data.logs.map(l => `<div>&gt; ${l}</div>`).join('');
+                        consoleDiv.scrollTop = consoleDiv.scrollHeight;
+                        
+                        updateStepperFromLogs(data.logs);
+                        showCompletionModal(data.logs);
+                    } else {
+                        // Truly idle — 从未有任务运行
+                        idleCard.style.display = 'block';
+                        dashboardCard.style.display = 'none';
+                        consoleCard.style.display = 'none';
+                    }
+                }
+            } catch (e) {
+                console.error("轮询状态失败", e);
+            }
+        }
+
+        function updateStepperFromLogs(logs) {
+            let activeStep = 0; 
+            let progressPercent = 0;
+            let currentStatusText = "流水线准备中...";
+            let hasError = false;
+
+            logs.forEach(log => {
+                const text = log.toLowerCase();
+                if (text.includes('starting processing') || text.includes('fetch')) {
+                    activeStep = 0;
+                    progressPercent = 15;
+                    currentStatusText = "正在解析并提取歌曲详情...";
+                } else if (text.includes('download') || text.includes('processing song') || text.includes('下载')) {
+                    activeStep = 1;
+                    progressPercent = 35;
+                    currentStatusText = "正在从网易云下载高保真音频与歌词...";
+                } else if (text.includes('ffmpeg') || text.includes('spectrum') || text.includes('画幅') || text.includes('频谱')) {
+                    activeStep = 2;
+                    progressPercent = 60;
+                    currentStatusText = "正在生成音频动态频谱与视觉粒子...";
+                } else if (text.includes('stitch') || text.includes('concat') || text.includes('stitching') || text.includes('拼接') || text.includes('合成')) {
+                    activeStep = 3;
+                    progressPercent = 80;
+                    currentStatusText = "正在拼接长视频片段并合并音频流...";
+                } else if (text.includes('upload') || text.includes('bilibili') || text.includes('上传')) {
+                    activeStep = 4;
+                    progressPercent = 95;
+                    currentStatusText = "视频压制完成！正在同步上传至B站账号...";
+                }
+
+                if (text.includes('error') || text.includes('failed') || text.includes('错误') || text.includes('失败')) {
+                    hasError = true;
+                }
+            });
+
+            const finalLog = logs.find(l => l.includes('[OK] Done!'));
+            if (finalLog) {
+                activeStep = 5;
+                progressPercent = 100;
+                currentStatusText = "视频合成大功告成！";
+            }
+
+            document.getElementById('stepper-current-task').innerText = currentStatusText;
+            document.getElementById('stepper-progress-bar').style.width = progressPercent + '%';
+            document.getElementById('stepper-percent').innerText = progressPercent + '%';
+
+            for (let i = 0; i < 5; i++) {
+                const el = document.getElementById(`step-${i+1}`);
+                if (!el) continue;
+                
+                if (hasError && i === activeStep) {
+                    el.className = "step-item failed";
+                    el.querySelector('.step-dot').innerText = "❌";
+                } else if (i < activeStep || activeStep === 5) {
+                    el.className = "step-item completed";
+                    el.querySelector('.step-dot').innerText = "🟢";
+                } else if (i === activeStep) {
+                    el.className = "step-item active";
+                    el.querySelector('.step-dot').innerText = "⚡";
+                } else {
+                    el.className = "step-item";
+                    el.querySelector('.step-dot').innerText = "🔵";
+                }
+            }
+        }
+
+        function showCompletionModal(logs) {
+            const hasUpload = logs.some(l => l.includes('Upload success'));
+            const uploadFailed = logs.some(l => l.includes('Upload failed') || l.includes('Auto-upload error'));
+            
+            const finalLog = logs.find(l => l.includes('Final video:'));
+            const finalPath = finalLog ? finalLog.split('Final video:')[1].trim() : '';
+            
+            document.getElementById('video-path').innerText = finalPath || '未找到视频路径';
+            
+            // 依据日志自动判断是否勾选了自动上传
+            const hasAutoUploadLog = logs.some(l => l.toLowerCase().includes('auto-upload enabled'));
+            
+            if (hasAutoUploadLog) {
+                if (hasUpload) {
+                    const bvidLog = logs.find(l => l.includes('Upload success'));
+                    const bvid = bvidLog ? bvidLog.split('bvid:')[1].trim().replace(')','') : '';
+                    document.getElementById('upload-info').innerHTML = 
+                        '<span style="color:#2ecc71;">已自动上传到B站！</span><br>' +
+                        '<span style="color:var(--accent); font-weight:700;">bvid: ' + bvid + '</span>';
+                } else if (uploadFailed) {
+                    document.getElementById('upload-info').innerHTML = 
+                        '<span style="color:#ff4757;">自动上传失败，请手动投稿。</span>';
+                    document.getElementById('open-upload-btn').style.display = 'inline-block';
+                } else {
+                    document.getElementById('upload-info').innerText = '自动上传状态未知，请检查日志。';
+                }
+            } else {
+                document.getElementById('upload-info').innerText = '点击"去投稿"手动上传到B站。';
+                document.getElementById('open-upload-btn').style.display = 'inline-block';
+            }
+            
+            document.getElementById('completion-modal').style.display = 'flex';
+        }
+
+        function closeModal() {
+            document.getElementById('completion-modal').style.display = 'none';
+            // 重新载入状态显示闲置界面
+            checkStatus();
+        }
+
+        function copyVideoPath() {
+            const path = document.getElementById('video-path').innerText;
+            navigator.clipboard.writeText(path);
+            alert('视频路径已成功复制到剪贴板！');
+        }
+
+        function openUploadPage() {
+            window.open('/static/upload.html', '_blank');
+        }
+
+        function copyConsoleLogs() {
+            const logsText = Array.from(document.querySelectorAll('#console div')).map(d => d.textContent).join('\n');
+            navigator.clipboard.writeText(logsText);
+            alert('日志已成功复制到剪贴板！');
+        }
+
+        function clearConsoleLogs() {
+            document.getElementById('console').innerHTML = '';
+            lastLogLength = 0;
+        }
+
+        // 载入即开启长轮询循环
+        checkStatus();
+        pollInterval = setInterval(checkStatus, 1500);
+    </script>
+</body>
+</html>

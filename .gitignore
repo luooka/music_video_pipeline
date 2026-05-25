@@ -1,6 +1,43 @@
-﻿output/
+# === 敏感账户信息 (SENSITIVE - NEVER COMMIT) ===
 config.json
 cookies.json
+
+# === 日志文件 ===
 *.log
-__pycache__/
+
+# === 运行时生成文件 ===
+output/
 *.png
+*.qr
+
+# === Python 缓存 ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# === 虚拟环境 ===
+venv/
+.venv/
+env/
+
+# === IDE / 编辑器 ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# === 系统文件 ===
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# === PyInstaller 构建产物 ===
+build/
+dist/
+*.spec
+
+# === 其他 ===
+*.bak
+*.tmp

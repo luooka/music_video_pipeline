@@ -169,7 +169,8 @@ class PipelineProcessor:
 
     async def fetch_recommendations(self, demo: bool = False, count: int = 10):
         if demo:
-            return await self.api.search_songs("热门歌曲", limit=count)
+            res = await self.api.search_songs("热门歌曲", limit=count)
+            return res.get("songs", []) if isinstance(res, dict) else res
         return await self.api.get_daily_recommend()
 
     async def create_visuals(self, song: dict, bg_path: str, cover_path: str):

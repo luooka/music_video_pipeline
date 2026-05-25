@@ -103,21 +103,40 @@ def update_config(data: ConfigUpdate):
     return {"status": "success"}
 
 @app.get("/search", summary="搜索歌曲", tags=["音乐数据"])
-async def search_songs(q: str):
-    """通过关键词搜索网易云音乐歌曲"""
+async def search_songs(q: str, limit: int = 20, offset: int = 0):
+    """通过关键词搜索网易云音乐歌曲，支持分页"""
     try:
         proc = get_processor()
-        songs = await proc.api.search_songs(q)
-        return {"songs": songs}
+        result = await proc.api.search_songs(q, limit=limit, offset=offset)
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 @app.get("/recommendations", summary="获取今日推荐", tags=["音乐数据"])
 async def get_recommendations():
     """调用网易云 API 获取用户今日推荐歌曲"""
     try:
         proc = get_processor()
         songs = await proc.fetch_recommendations()
+        return {"songs": songs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/netease/playlists", summary="获取当前登录用户的所有歌单", tags=["音乐数据"])
+async def get_user_playlists():
+    """获取当前已登录网易云账户的所有个人/收藏歌单列表"""
+    try:
+        proc = get_processor()
+        playlists = await proc.api.get_user_playlists()
+        return {"playlists": playlists}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/netease/playlist/tracks", summary="获取特定歌单的曲目", tags=["音乐数据"])
+async def get_playlist_tracks(id: int, limit: int = 20, offset: int = 0):
+    """根据歌单 ID 异步拉取其中的部分歌曲曲目，支持分页"""
+    try:
+        proc = get_processor()
+        songs = await proc.api.get_playlist_tracks(id, limit=limit, offset=offset)
         return {"songs": songs}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

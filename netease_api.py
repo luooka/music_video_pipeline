@@ -44,11 +44,49 @@ class NeteaseAPI:
             songs = data.get("recommend", [])
         return self._parse_songs(songs)
 
-    async def search_songs(self, keyword: str, limit: int = 10) -> list:
+    async def search_songs(self, keyword: str, limit: int = 20, offset: int = 0) -> dict:
         from pyncm.apis.cloudsearch import GetSearchResult
-        data = await self._run_sync(GetSearchResult, keyword, limit=limit)
-        songs_raw = data.get("result", {}).get("songs", [])
-        return self._parse_songs(songs_raw[:limit])
+        data = await self._run_sync(GetSearchResult, keyword, limit=limit, offset=offset)
+        result = data.get("result", {})
+        songs_raw = result.get("songs", [])
+        song_count = result.get("songCount", 0)
+        return {
+            "songs": self._parse_songs(songs_raw),
+            "total": song_count
+        }
+
+    async def get_user_playlists(self) -> list:
+        """获取当前登录用户的歌单"""
+        from pyncm.apis.login import GetCurrentLoginStatus
+        from pyncm.apis.user import GetUserPlaylists
+        
+        status = await self._run_sync(GetCurrentLoginStatus)
+        if status.get("code") != 200 or not status.get("profile"):
+            return []
+        
+        user_id = status["profile"]["userId"]
+        data = await self._run_sync(GetUserPlaylists, user_id)
+        if data.get("code") != 200:
+            return []
+        
+        playlists = data.get("playlist", [])
+        result = []
+        for p in playlists:
+            result.append({
+                "id": p["id"],
+                "name": p["name"],
+                "cover": p.get("coverImgUrl", ""),
+                "track_count": p.get("trackCount", 0),
+                "description": p.get("description", "") or ""
+            })
+        return result
+
+    async def get_playlist_tracks(self, playlist_id: int, limit: int = 20, offset: int = 0) -> list:
+        """获取歌单中的部分歌曲（支持分页）"""
+        from pyncm.apis.playlist import GetPlaylistAllTracks
+        data = await self._run_sync(GetPlaylistAllTracks, playlist_id, limit=limit, offset=offset)
+        songs = data.get("songs", [])
+        return self._parse_songs(songs)
 
     async def get_song_url(self, song_id: int) -> str | None:
         from pyncm.apis.track import GetTrackAudio
