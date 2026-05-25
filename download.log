@@ -1,5 +1,0 @@
-2026-04-20 11:55:16  INFO ThreadId(19) stream_gears::server: crates\stream-gears\src\server.rs:449: Tracing initialized with daily rotation
-2026-04-20 11:55:49  INFO ThreadId(19) biliup_cli::uploader: crates\biliup-cli\src\uploader.rs:99: 登录成功，数据保存在File { handle: 0x3c0, path: "\\\\?\\D:\\mosproject\\mosflash\\music_video_pipeline\\cookies.json" }
-2026-04-20 11:58:52  INFO ThreadId(19) stream_gears::server: crates\stream-gears\src\server.rs:449: Tracing initialized with daily rotation
-2026-04-20 13:41:15  INFO ThreadId(19) stream_gears::server: crates\stream-gears\src\server.rs:449: Tracing initialized with daily rotation
-2026-04-20 13:47:23  INFO ThreadId(19) stream_gears::server: crates\stream-gears\src\server.rs:449: Tracing initialized with daily rotation

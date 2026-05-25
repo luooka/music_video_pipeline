@@ -244,6 +244,39 @@
             display: flex;
             gap: 10px;
         }
+
+        /* Completion modal */
+        .completion-modal {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .completion-modal-content {
+            background: var(--bg-color);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 500px;
+            text-align: center;
+        }
+        .completion-modal-content h3 {
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+        .completion-modal-content p {
+            color: var(--text-dim);
+            margin-bottom: 15px;
+            line-height: 1.6;
+        }
+        .completion-modal-content .video-link {
+            color: var(--accent);
+            word-break: break-all;
+            font-size: 14px;
+        }
     </style>
 </head>
 
@@ -264,6 +297,19 @@
             <div id="status-display" style="color: var(--text-dim); font-size: 14px;">准备就绪</div>
         </div>
 
+        <div>
+            <div class="section-title">上传格式</div>
+            <div id="format-selector" style="margin-bottom:15px;">
+                <select id="upload-format" style="width:100%; margin-bottom:10px; background:rgba(0,0,0,0.3); color:#fff; border:1px solid var(--glass-border); padding:8px; border-radius:6px;">
+                    <option value="default">默认格式</option>
+                </select>
+                <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text-dim); cursor:pointer;">
+                    <input type="checkbox" id="auto-upload" style="width:16px; height:16px;">
+                    合成后自动上传
+                </label>
+            </div>
+        </div>
+
         <div id="console-container" style="flex: 1; display: flex; flex-direction: column;">
             <div class="section-title">实时日志</div>
             <div id="console"></div>
@@ -271,16 +317,25 @@
 
         <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--glass-border);">
             <div class="section-title">开发者工具</div>
-            <a href="/docs" target="_blank" style="color: var(--accent); font-size: 13px; text-decoration: none; display: flex; align-items: center; gap: 5px;">
+            <a href="/docs" target="_blank" style="color: var(--accent); font-size: 13px; text-decoration: none; display: flex; align-items: center; gap: 5px; margin-bottom: 10px;">
                 <span>📂 查看交互式 API 文档</span>
                 <span style="font-size: 10px;">↗</span>
+            </a>
+            <a href="/static/login.html" style="color: var(--accent); font-size: 13px; text-decoration: none; display: flex; align-items: center; gap: 5px;">
+                <span>🔐 B站账号登录</span>
             </a>
         </div>
     </aside>
 
     <main>
         <div class="top-bar">
-            <h2>今日推荐</h2>
+            <div style="display:flex; align-items:center; gap:30px;">
+                <h2>今日推荐</h2>
+                <div style="display:flex; gap:15px;">
+                    <a href="/" style="color:var(--accent); text-decoration:none; font-size:14px; padding:8px 12px; border-radius:6px; background:rgba(0,242,254,0.1);">合成页</a>
+                    <a href="/static/upload.html" style="color:var(--text-dim); text-decoration:none; font-size:14px; padding:8px 12px; border-radius:6px;">投稿页</a>
+                </div>
+            </div>
             <div class="btn-group">
                 <button class="btn-outline" onclick="selectAll()" style="font-size: 13px;">全选</button>
                 <button class="btn-outline" onclick="deselectAll()" style="font-size: 13px;">清空</button>
@@ -326,9 +381,19 @@
                 updateActionBar();
                 renderSongs();
                 document.getElementById('status-display').innerText = `已加载 ${allSongs.length} 首推荐`;
+                loadUploadFormats();
             } catch (e) {
                 document.getElementById('status-display').innerText = "连接后端失败";
             }
+        }
+
+        async function loadUploadFormats() {
+            try {
+                const res = await fetch(`${API_BASE}/bilibili/upload-formats`);
+                const formats = await res.json();
+                const select = document.getElementById('upload-format');
+                select.innerHTML = formats.map(f => `<option value="${f.name}">${f.name}</option>`).join('');
+            } catch(e) {}
         }
 
         function renderSongs() {
@@ -380,13 +445,19 @@
         }
 
         async function startGenerate() {
-            // 按照 selectedIds 的顺序排列歌曲
             const songsToGen = selectedIds.map(id => allSongs.find(s => s.id === id)).filter(s => s);
+            const autoUpload = document.getElementById('auto-upload').checked;
+            const formatName = autoUpload ? document.getElementById('upload-format').value : '';
 
             const res = await fetch(`${API_BASE}/generate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ songs: songsToGen, combine: true })
+                body: JSON.stringify({ 
+                    songs: songsToGen, 
+                    combine: true, 
+                    auto_upload: autoUpload,
+                    upload_format_name: formatName 
+                })
             });
 
             if (res.ok) {
@@ -396,8 +467,11 @@
         }
 
         let pollInterval;
+        let pendingAutoUpload = false;
+        
         function startStatusPolling() {
             if (pollInterval) clearInterval(pollInterval);
+            pendingAutoUpload = document.getElementById('auto-upload').checked;
             pollInterval = setInterval(async () => {
                 const res = await fetch(`${API_BASE}/status`);
                 const data = await res.json();
@@ -409,10 +483,57 @@
                 if (!data.is_running) {
                     clearInterval(pollInterval);
                     document.getElementById('status-display').innerText = "合成大功告成！";
+                    showCompletionModal(data.logs);
                 } else {
                     document.getElementById('status-display').innerText = "正在疯狂合成中...";
                 }
             }, 1000);
+        }
+
+        function showCompletionModal(logs) {
+            const hasUpload = logs.some(l => l.includes('Upload success'));
+            const uploadFailed = logs.some(l => l.includes('Upload failed') || l.includes('Auto-upload error'));
+            
+            // 解析视频路径
+            const finalLog = logs.find(l => l.includes('Final video:'));
+            const finalPath = finalLog ? finalLog.split('Final video:')[1].trim() : '';
+            
+            document.getElementById('video-path').innerText = finalPath || '未找到视频路径';
+            
+            if (pendingAutoUpload) {
+                if (hasUpload) {
+                    const bvidLog = logs.find(l => l.includes('Upload success'));
+                    const bvid = bvidLog ? bvidLog.split('bvid:')[1].trim().replace(')','') : '';
+                    document.getElementById('upload-info').innerHTML = 
+                        '<span style="color:#2ecc71;">已自动上传到B站！</span><br>' +
+                        '<span class="video-link">bvid: ' + bvid + '</span>';
+                } else if (uploadFailed) {
+                    document.getElementById('upload-info').innerHTML = 
+                        '<span style="color:#ff4757;">自动上传失败，请手动投稿。</span>';
+                    document.getElementById('open-upload-btn').style.display = 'inline-block';
+                } else {
+                    document.getElementById('upload-info').innerText = '自动上传状态未知，请检查日志。';
+                }
+            } else {
+                document.getElementById('upload-info').innerText = '点击"去投稿"手动上传到B站。';
+                document.getElementById('open-upload-btn').style.display = 'inline-block';
+            }
+            
+            document.getElementById('completion-modal').style.display = 'flex';
+        }
+
+        function closeModal() {
+            document.getElementById('completion-modal').style.display = 'none';
+        }
+
+        function copyVideoPath() {
+            const path = document.getElementById('video-path').innerText;
+            navigator.clipboard.writeText(path);
+            alert('路径已复制');
+        }
+
+        function openUploadPage() {
+            window.open('/static/upload.html', '_blank');
         }
 
         // 初始加载配置
@@ -425,6 +546,21 @@
         }
         loadInitial();
     </script>
-</body>
 
+    <div id="completion-modal" class="completion-modal" style="display:none;">
+        <div class="completion-modal-content">
+            <h3>合成完成</h3>
+            <div id="modal-content">
+                <p>视频已成功生成。</p>
+                <p id="video-path" class="video-link"></p>
+                <p id="upload-info"></p>
+            </div>
+            <div style="display:flex; gap:15px; margin-top:25px;">
+                <button class="btn-outline" onclick="closeModal()">关闭</button>
+                <button class="btn-primary" onclick="copyVideoPath()">复制路径</button>
+                <button id="open-upload-btn" class="btn-outline" style="display:none;" onclick="openUploadPage()">去投稿</button>
+            </div>
+        </div>
+    </div>
+</body>
 </html>

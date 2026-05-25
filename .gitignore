@@ -1,1 +1,6 @@
-output/  
+﻿output/
+config.json
+cookies.json
+*.log
+__pycache__/
+*.png

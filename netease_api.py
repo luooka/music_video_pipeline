@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 """网易云音乐 API 客户端 - 使用 pyncm 加密"""
 import asyncio
+import logging
 from pathlib import Path
 from functools import partial
+
+logger = logging.getLogger('pipeline.netease_api')
 
 # ── 用 pyncm 装饰器定义每日推荐接口 ──
 from pyncm.apis import WeapiCryptoRequest
