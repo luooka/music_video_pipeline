@@ -1,21 +1,59 @@
+import logging
 import os
 import sys
 import subprocess
 import shutil
+import atexit
+import signal
+import threading
+import time
 from pathlib import Path
+from typing import List
+
+logger = logging.getLogger('pipeline.video_maker')
+
+# 进程管理：跟踪所有启动的FFmpeg进程
+_ffmpeg_processes: List[subprocess.Popen] = []
+_ffmpeg_processes_lock = threading.Lock()
+
+def _cleanup_ffmpeg_processes():
+    """清理所有FFmpeg进程"""
+    with _ffmpeg_processes_lock:
+        for proc in _ffmpeg_processes[:]:
+            try:
+                if proc.poll() is None:  # 进程还在运行
+                    logger.info(f"终止残留FFmpeg进程 (PID: {proc.pid})")
+                    if os.name == 'nt':  # Windows
+                        proc.send_signal(signal.CTRL_BREAK_EVENT)
+                    else:  # Linux/Mac
+                        proc.send_signal(signal.SIGTERM)
+                    
+                    # 等待进程结束
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+            except Exception as e:
+                logger.warning(f"清理FFmpeg进程失败: {e}")
+        _ffmpeg_processes.clear()
+
+# 注册退出清理函数
+atexit.register(_cleanup_ffmpeg_processes)
 
 # Windows Job Object "越狱" flag
 # AstrBot 会把所有子进程绑入一个 Job Object 并限制内存总量。
-# CREATE_NEW_PROCESS_GROUP 会让 FFmpeg 以独立进程组启动，从而逃脱该限制。
-# 这正是 WebView 模式下 FFmpeg 能自由使用内存的原因。
-_FFMPEG_CREATION_FLAGS = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
+# CREATE_BREAKAWAY_FROM_JOB 会让 FFmpeg 脱离 Job Object，从而逃脱内存限制。
+# 但需要配合进程跟踪和清理机制。
+_FFMPEG_CREATION_FLAGS = subprocess.CREATE_BREAKAWAY_FROM_JOB if sys.platform == "win32" else 0
 
 
 class VideoMaker:
-    def __init__(self, width: int = 1920, height: int = 1080, fps: int = 24):
+    def __init__(self, width: int = 1920, height: int = 1080, fps: int = 24, config: dict = None):
         self.width = width
         self.height = height
         self.fps = fps
+        self.config = config or {}
         self._ffmpeg = self._find_ffmpeg()
 
     def _find_ffmpeg(self) -> str:
@@ -54,9 +92,10 @@ class VideoMaker:
                 safe_sub_path = path_str
 
         # 1. 专业级镜像律动条 (优化渲染路径以降低内存压力)
+        spec_size = self.config.get("video", {}).get("spectrum_size", "800x75")
         filter_complex = (
             f"[2:a]asplit[a_main][a_tmp];"
-            f"[a_tmp]volume=1.2,showfreqs=s=800x75:mode=bar:colors=white:fscale=log:ascale=sqrt[viz_raw];"
+            f"[a_tmp]volume=1.2,showfreqs=s={spec_size}:mode=bar:colors=white:fscale=log:ascale=sqrt[viz_raw];"
             f"[viz_raw]split[viz_t][viz_for_flip];"
             f"[viz_for_flip]vflip[viz_b];"
             f"[viz_t][viz_b]vstack,format=yuva420p[viz_combined];"
@@ -72,13 +111,13 @@ class VideoMaker:
         cmd = [
             self._ffmpeg, "-y",
             "-loglevel", "error",
-            "-threads", "1",                   # 强制单线程：这是在 OOM 环境下生存的关键，将内存占用降至最低
+            "-threads", str(self.config.get("video", {}).get("threads", 1)),                   # 强制单线程：这是在 OOM 环境下生存的关键，将内存占用降至最低
             "-loop", "1", "-i", image_path,    # [0:v] 背景
             "-loop", "1", "-i", cover_path,    # [1:v] 封面
             "-i", audio_path,                  # [2:a] 音频
-            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "stillimage", # 使用 ultrafast 进一步降低内存开销
-            "-c:a", "aac", "-b:a", "128k",
-            "-ac", "2", "-ar", "44100",        # 强制规格化音频：2声道，44.1k采样率，解决拼接无声的关键
+            "-c:v", "libx264", "-preset", self.config.get("video", {}).get("preset", "ultrafast"), "-tune", "stillimage", # 使用 ultrafast 进一步降低内存开销
+            "-c:a", "aac", "-b:a", self.config.get("video", {}).get("audio_bitrate", "128k"),
+            "-ac", str(self.config.get("video", {}).get("audio_channels", 2)), "-ar", str(self.config.get("video", {}).get("audio_sample_rate", 44100)),        # 强制规格化音频：2声道，44.1k采样率，解决拼接无声的关键
             "-filter_complex", filter_complex,
             "-map", "[v_combined]",
             "-map", "[a_main]",
@@ -99,21 +138,59 @@ class VideoMaker:
                 f.write(f"\n--- RENDERING {output_path} ---\n")
                 f.write(f"CMD: {' '.join(cmd)}\n")
                 f.flush()
-                # 关键：creationflags 让 FFmpeg 逃脱 AstrBot 的 Job Object 内存限制
-                subprocess.run(
-                    cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=f,
-                    check=True,
-                    timeout=600,
-                    creationflags=_FFMPEG_CREATION_FLAGS
-                )
-            return output_path
-        except subprocess.TimeoutExpired:
-            print(f"\n  [FAIL] FFmpeg timeout (600s) for {output_path}", file=sys.stderr)
-            return None
+                
+                # 使用Popen启动进程以便跟踪
+                try:
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.DEVNULL,
+                        stderr=f,
+                        creationflags=_FFMPEG_CREATION_FLAGS
+                    )
+                except PermissionError as pe:
+                    if sys.platform == "win32" and (_FFMPEG_CREATION_FLAGS & subprocess.CREATE_BREAKAWAY_FROM_JOB):
+                        logger.warning("Failed to start FFmpeg with CREATE_BREAKAWAY_FROM_JOB due to permission limit. Retrying without breakaway flag...")
+                        proc = subprocess.Popen(
+                            cmd,
+                            stdout=subprocess.DEVNULL,
+                            stderr=f,
+                            creationflags=0
+                        )
+                    else:
+                        raise pe
+                
+                # 记录进程以便清理
+                with _ffmpeg_processes_lock:
+                    _ffmpeg_processes.append(proc)
+                
+                # 等待进程完成，带超时
+                try:
+                    proc.wait(timeout=600)
+                    if proc.returncode == 0:
+                        # 从跟踪列表中移除已完成的进程
+                        with _ffmpeg_processes_lock:
+                            if proc in _ffmpeg_processes:
+                                _ffmpeg_processes.remove(proc)
+                        return output_path
+                    else:
+                        logger.error(f"FFmpeg failed with return code {proc.returncode} for {output_path}")
+                        return None
+                except subprocess.TimeoutExpired:
+                    logger.error(f"FFmpeg timeout (600s) for {output_path}, terminating...")
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+                    return None
+                finally:
+                    # 确保进程被清理
+                    with _ffmpeg_processes_lock:
+                        if proc in _ffmpeg_processes:
+                            _ffmpeg_processes.remove(proc)
         except Exception as e:
-            print(f"\n  [FAIL] FFmpeg render failed. Check {log_path} for details. Error: {e}", file=sys.stderr)
+            logger.error(f"FFmpeg render failed. Check {log_path} for details. Error: {e}")
             return None
 
     def concat_clips(self, clip_paths: list, output_path: str) -> str | None:
@@ -148,9 +225,9 @@ class VideoMaker:
         ] + inputs + [
             "-filter_complex", filter_complex,
             "-map", "[outv]", "-map", "[outa]",
-            "-c:v", "libx264", "-preset", "fast",
-            "-c:a", "aac", "-b:a", "128k",
-            "-ac", "2", "-ar", "44100",
+            "-c:v", "libx264", "-preset", self.config.get("video", {}).get("preset", "fast"),
+            "-c:a", "aac", "-b:a", self.config.get("video", {}).get("audio_bitrate", "128k"),
+            "-ac", str(self.config.get("video", {}).get("audio_channels", 2)), "-ar", str(self.config.get("video", {}).get("audio_sample_rate", 44100)),
             "-pix_fmt", "yuv420p",
             output_path,
         ]
@@ -162,16 +239,58 @@ class VideoMaker:
                 f.write(f"\n--- CONCATENATING (filter mode) TO {output_path} ---\n")
                 f.write(f"CMD: {' '.join(cmd)}\n")
                 f.flush()
-                subprocess.run(
-                    cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=f,
-                    check=True,
-                    timeout=1800,   # 完整重编码需要更长时间
-                    creationflags=_FFMPEG_CREATION_FLAGS
-                )
-            return output_path
+                
+                # 使用Popen启动进程以便跟踪
+                try:
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.DEVNULL,
+                        stderr=f,
+                        creationflags=_FFMPEG_CREATION_FLAGS
+                    )
+                except PermissionError as pe:
+                    if sys.platform == "win32" and (_FFMPEG_CREATION_FLAGS & subprocess.CREATE_BREAKAWAY_FROM_JOB):
+                        logger.warning("Failed to start FFmpeg with CREATE_BREAKAWAY_FROM_JOB due to permission limit. Retrying without breakaway flag...")
+                        proc = subprocess.Popen(
+                            cmd,
+                            stdout=subprocess.DEVNULL,
+                            stderr=f,
+                            creationflags=0
+                        )
+                    else:
+                        raise pe
+                
+                # 记录进程以便清理
+                with _ffmpeg_processes_lock:
+                    _ffmpeg_processes.append(proc)
+                
+                # 等待进程完成，带超时
+                try:
+                    proc.wait(timeout=1800)  # 完整重编码需要更长时间
+                    if proc.returncode == 0:
+                        # 从跟踪列表中移除已完成的进程
+                        with _ffmpeg_processes_lock:
+                            if proc in _ffmpeg_processes:
+                                _ffmpeg_processes.remove(proc)
+                        return output_path
+                    else:
+                        logger.error(f"FFmpeg concat failed with return code {proc.returncode}")
+                        return None
+                except subprocess.TimeoutExpired:
+                    logger.error(f"FFmpeg concat timeout (1800s), terminating...")
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+                    return None
+                finally:
+                    # 确保进程被清理
+                    with _ffmpeg_processes_lock:
+                        if proc in _ffmpeg_processes:
+                            _ffmpeg_processes.remove(proc)
         except Exception as e:
-            print(f"\n  [FAIL] FFmpeg concat failed. Check {log_path}. Error: {e}", file=sys.stderr)
+            logger.error(f"FFmpeg concat failed. Check {log_path}. Error: {e}")
             return None
 

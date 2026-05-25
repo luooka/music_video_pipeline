@@ -4,29 +4,74 @@ import json
 import sys
 import os
 import re
+import platform
 import httpx
 from pathlib import Path
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from netease_api import NeteaseAPI
 from video_maker import VideoMaker
+from cleanup_manager import setup_cleanup_scheduler
 
-# Windows 控制台编码适配
-if sys.platform == "win32":
-    try:
-        # 强制配置 stdout/stderr 为 utf-8，并允许替换非法字符
-        # 这与 gui_client.py 中的 chcp 65001 保持一致
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stderr),
+        logging.FileHandler('pipeline.log', encoding='utf-8')
+    ]
+)
+logger = logging.getLogger('pipeline')
+
+# 控制台编码适配 - 使用局部包装器而非全局修改
+class ConsoleEncodingWrapper:
+    """包装器，在输出时处理编码问题而不修改全局设置"""
+    
+    def __init__(self, original_stream, encoding='utf-8', errors='replace'):
+        self.original_stream = original_stream
+        self.encoding = encoding
+        self.errors = errors
+    
+    def write(self, text):
+        if isinstance(text, str):
+            try:
+                # 尝试使用原始编码
+                self.original_stream.write(text)
+            except UnicodeEncodeError:
+                # 如果失败，使用指定编码
+                encoded = text.encode(self.encoding, errors=self.errors).decode(self.encoding)
+                self.original_stream.write(encoded)
+        else:
+            self.original_stream.write(text)
+    
+    def flush(self):
+        self.original_stream.flush()
+    
+    def __getattr__(self, name):
+        return getattr(self.original_stream, name)
+
+# 仅在需要时包装标准输出
+def setup_console_encoding():
+    """设置控制台编码，使用包装器而非全局修改"""
+    if sys.platform == "win32":
+        # Windows: 使用chcp命令设置控制台代码页
+        try:
+            import os
+            os.system("chcp 65001 >nul 2>nul")
+        except:
+            pass
+        
+        # 包装标准输出
+        if not isinstance(sys.stdout, ConsoleEncodingWrapper):
+            sys.stdout = ConsoleEncodingWrapper(sys.stdout, encoding='utf-8', errors='replace')
+            sys.stderr = ConsoleEncodingWrapper(sys.stderr, encoding='utf-8', errors='replace')
+    else:
+        # Linux/macOS: 通常已经支持UTF-8
         pass
-else:
-    # Linux/macOS 平台：统一使用 UTF-8
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
+
+# 调用设置函数
+setup_console_encoding()
 
 if getattr(sys, 'frozen', False):
     # 打包模式下，配置文件放在 exe 同级目录
@@ -43,6 +88,11 @@ DEFAULT_CONFIG = {
     "video_width": 1920,
     "video_height": 1080,
     "video_fps": 24,
+    "cleanup": {
+        "max_age_days": 7,           # 保留最近7天的文件
+        "max_total_size_gb": 10,     # 最大占用10GB空间
+        "cleanup_on_start": True     # 启动时自动清理
+    }
 }
 
 def load_config() -> dict:
@@ -60,18 +110,15 @@ class PipelineProcessor:
         self.h = config.get("video_height", 1080)
         self.fps = config.get("video_fps", 24)
         self.api = NeteaseAPI(config.get("netease_cookie", ""))
-        self.video_maker = VideoMaker(self.w, self.h, self.fps)
+        self.video_maker = VideoMaker(self.w, self.h, self.fps, self.config)
         self.status_callback = None
+        self.cleanup_manager = None  # 延迟初始化，避免循环导入
 
     def set_status_callback(self, callback):
         self.status_callback = callback
 
     def _log(self, msg: str):
-        # 强制将日志输出到 stderr，并确保编码转义安全
-        try:
-            print(msg, file=sys.stderr)
-        except UnicodeEncodeError:
-            print(msg.encode('ascii', 'backslashreplace').decode('ascii'), file=sys.stderr)
+        logger.info(msg)
         
         if self.status_callback:
             try:
@@ -116,26 +163,32 @@ class PipelineProcessor:
         bg_img = bg_img.resize((nb_w, nb_h), Image.Resampling.LANCZOS)
         left, top = (nb_w - self.w) // 2, (nb_h - self.h) // 2
         bg_img = bg_img.crop((left, top, left + self.w, top + self.h))
-        bg_img = bg_img.filter(ImageFilter.GaussianBlur(radius=40))
+        bg_img = bg_img.filter(ImageFilter.GaussianBlur(radius=self.config.get("visual", {}).get("blur_radius", 40)))
         enhancer = Image.new("RGB", (self.w, self.h), (0, 0, 0))
-        bg_img = Image.blend(bg_img, enhancer, 0.5)
+        bg_img = Image.blend(bg_img, enhancer, self.config.get("visual", {}).get("blend_alpha", 0.5))
         
         # 3. 绘制文字 (增加自动换行处理)
         draw = ImageDraw.Draw(bg_img)
         name, artists_str = song["name"], ", ".join(song.get("artists", []))
         
         try:
-            font_paths = ["msyh.ttc", "simhei.ttf", "C:/Windows/Fonts/msyh.ttc"]
+            font_cfg = self.config.get("font", {})
+            if platform.system() == "Darwin":
+                font_paths = font_cfg.get("macos_paths", [])
+            elif platform.system() == "Linux":
+                font_paths = font_cfg.get("linux_font_names", [])
+            else:
+                font_paths = font_cfg.get("paths", [])
             font, font_s = None, None
             for fp in font_paths:
                 try:
-                    font = ImageFont.truetype(fp, 70) # 稍微缩小字号以适应长标题
-                    font_s = ImageFont.truetype(fp, 35)
+                    font = ImageFont.truetype(fp, self.config.get("visual", {}).get("title_font_size", 70)) # 稍微缩小字号以适应长标题
+                    font_s = ImageFont.truetype(fp, self.config.get("visual", {}).get("artist_font_size", 35))
                     break
                 except: continue
             if not font: raise Exception()
         except:
-            font = ImageFont.load_default(size=70); font_s = ImageFont.load_default(size=35)
+            font = ImageFont.load_default(size=self.config.get("visual", {}).get("title_font_size", 70)); font_s = ImageFont.load_default(size=self.config.get("visual", {}).get("artist_font_size", 35))
 
         def draw_wrapped_text(draw, text, font, start_y, max_width, fill):
             lines = []
@@ -153,7 +206,7 @@ class PipelineProcessor:
             
             curr_y = start_y
             for line in lines:
-                draw.text((1050, curr_y), line, font=font, fill=fill)
+                draw.text((self.config.get("visual", {}).get("text_x", 1050), curr_y), line, font=font, fill=fill)
                 curr_y += font.getbbox(line)[3] + 15
             return curr_y
 
@@ -220,6 +273,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         for d in [audio_dir, images_dir, lyrics_dir, clips_dir]: d.mkdir(parents=True, exist_ok=True)
 
         successful_clips = []
+        failed_songs = []
         for i, song in enumerate(songs, 1):
             self._log(f"\n[{i}/{len(songs)}] [SONG] {song['name']} - {', '.join(song['artists'])}")
             
@@ -228,12 +282,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if not audio_path.exists():
                 self._log("  -> 下载音频...")
                 ret = await self.api.download_song(song["id"], song["name"], str(audio_dir))
-                if not ret: continue
+                if not ret:
+                    failed_songs.append(f"{song['name']} (ID: {song['id']})")
+                    logger.warning(f"  [FAIL] 下载失败: {song['name']} (ID: {song['id']})")
+                    continue
             else: self._log("  -> 正在使用音频缓存 [OK]")
 
             # 2. 视觉
             bg_path, cover_path = images_dir / f"{song['id']}_bg.png", images_dir / f"{song['id']}_cover.png"
-            text_end_y = 400 # 默认安全高度
+            text_end_y = self.config.get("visual", {}).get("text_start_y", 400) # 默认安全高度
             if not bg_path.exists() or not cover_path.exists():
                 self._log("  -> 生成播放器 UI 资源...")
                 res_y = await self.create_visuals(song, str(bg_path), str(cover_path))
@@ -241,7 +298,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             else: 
                 self._log("  -> 正在使用资源缓存 [OK]")
                 # 如果使用缓存，这里暂时使用保守的固定高度或重新计算（简单处理给个 450）
-                text_end_y = 450
+                text_end_y = self.config.get("visual", {}).get("text_cached_y", 450)
 
             # 3. 歌词
             lrc_path, ass_path = lyrics_dir / f"{song['id']}.lrc", lyrics_dir / f"{song['id']}.ass"
@@ -258,13 +315,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 else: has_sub = True
 
             # 4. 合成
-            bg_path, cover_path = images_dir / f"{song['id']}_bg.png", images_dir / f"{song['id']}_cover.png"
-            if not bg_path.exists() or not cover_path.exists():
-                self._log("  -> 生成播放器 UI 资源...")
-                await self.create_visuals(song, str(bg_path), str(cover_path))
-            else: self._log("  -> 正在使用资源缓存 [OK]")
-
-            # 4. 合成
             clip_path = clips_dir / f"clip_{i:02d}_{song['id']}.mp4"
             if not clip_path.exists():
                 self._log("  -> 合成播放器视频片段...")
@@ -276,11 +326,28 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 self._log("  -> 正在使用视频缓存 [OK]")
                 successful_clips.append(str(clip_path))
 
+        if failed_songs:
+            logger.warning(f"\n===== {len(failed_songs)} 首歌曲下载失败 =====")
+            for fs in failed_songs:
+                logger.warning(f"  - {fs}")
+
         return successful_clips
 
 async def run_cli(args):
     config = load_config()
     proc = PipelineProcessor(config)
+    
+    # 启动清理管理器
+    try:
+        from cleanup_manager import CleanupManager
+        proc.cleanup_manager = CleanupManager(config)
+        if proc.cleanup_manager.cleanup_on_start:
+            print("🧹 清理旧文件中...")
+            stats = proc.cleanup_manager.cleanup_old_files()
+            if stats["deleted_files"] > 0:
+                print(f"  → 删除 {stats['deleted_files']} 个文件，释放 {stats['freed_space_mb']:.1f} MB")
+    except Exception as e:
+        print(f"⚠️  清理管理器初始化失败: {e}")
     
     today = datetime.now().strftime("%Y%m%d")
     run_dir = Path(config["output_dir"]) / today
@@ -300,6 +367,17 @@ async def run_cli(args):
         print(f"  ✅ 最终视频: {final_path}")
         # 生成歌单文本
         proc.save_song_list(songs, run_dir)
+        
+        # 显示磁盘使用情况
+        if proc.cleanup_manager:
+            usage = proc.cleanup_manager.get_disk_usage()
+            print(f"\n💾 磁盘使用情况:")
+            print(f"  总大小: {usage['total_size_gb']:.2f} GB ({usage['total_size_mb']:.0f} MB)")
+            print(f"  文件数: {usage['file_count']}")
+            if usage['oldest_file']:
+                print(f"  最旧文件: {usage['oldest_file']}")
+            if usage['newest_file']:
+                print(f"  最新文件: {usage['newest_file']}")
     else: print("  ❌ 拼接失败")
 
 if __name__ == "__main__":

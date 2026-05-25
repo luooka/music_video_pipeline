@@ -42,25 +42,57 @@ class BilibiliAuth:
     def verify_login(self, qr_json_str):
         """
         直接将原厂 JSON 传授给原厂校验函数
-        biliup 会自动在当前目录下生成 cookies.json
+        使用绝对路径确保 cookies.json 生成在正确位置
         """
         try:
-            # 关键修复：强制切换到代码目录，确保 Rust 引擎把 cookies.json 写在这里
-            old_cwd = os.getcwd()
-            os.chdir(self.base_dir)
+            # 使用绝对路径，不切换工作目录
+            import json
+            import tempfile
+            
+            # 创建临时文件保存原始JSON
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as tmp:
+                tmp.write(qr_json_str)
+                temp_json_path = tmp.name
             
             try:
-                # stream_gears.login_by_qrcode 现在也需要传递 proxy 参数 (我们传 None)
+                # 使用绝对路径调用stream_gears
+                # 注意：stream_gears.login_by_qrcode需要原始JSON字符串，不是文件路径
+                # 我们直接传递字符串，但确保cookies路径正确
+                
+                # 先检查当前目录是否有旧cookies
+                if os.path.exists("cookies.json"):
+                    # 如果当前目录有，移动到项目目录
+                    try:
+                        import shutil
+                        shutil.move("cookies.json", self.cookie_path)
+                    except Exception:
+                        pass
+                
+                # 直接调用，依赖stream_gears内部逻辑
                 success = stream_gears.login_by_qrcode(qr_json_str, None)
+                
+                # 检查cookies是否生成在项目目录
+                if not os.path.exists(self.cookie_path):
+                    # 检查是否生成在当前目录
+                    if os.path.exists("cookies.json"):
+                        try:
+                            import shutil
+                            shutil.move("cookies.json", self.cookie_path)
+                        except Exception as e:
+                            return {"success": False, "error": f"移动cookies失败: {str(e)}"}
+            
             finally:
-                # 恢复原有的工作目录，避免干扰 MCP 其他功能
-                os.chdir(old_cwd)
+                # 清理临时文件
+                try:
+                    os.unlink(temp_json_path)
+                except Exception:
+                    pass
             
             if success:
-                # 再次确认文件是否已刷新
+                # 最终确认文件存在
                 if os.path.exists(self.cookie_path):
                     return {"success": True, "status": "success"}
-                return {"success": False, "error": f"授权成功但未找到文件。当前CWD: {old_cwd}, 期待路径: {self.cookie_path}"}
+                return {"success": False, "error": f"授权成功但cookies文件未生成在: {self.cookie_path}"}
             return {"success": False, "error": "扫码验证失败或已超时"}
         except Exception as e:
             # 这里的异常可能是扫码超时返回的错误

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - 网易云每日推荐</title>
+    <style>
+        :root {
+            --bg-color: #0d0d12; --glass-bg: rgba(255,255,255,0.05); --glass-border: rgba(255,255,255,0.1);
+            --accent: #00f2fe; --accent-gradient: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
+            --text-main: #ffffff; --text-dim: #a0a0b8;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; font-family:'Segoe UI',system-ui,-apple-system,sans-serif; }
+        body { background-color:var(--bg-color); color:var(--text-main); height:100vh; display:flex; align-items:center; justify-content:center; }
+        .login-container { max-width:400px; width:90%; text-align:center; }
+        .logo { font-size:36px; font-weight:800; background:var(--accent-gradient); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; margin-bottom:20px; }
+        .subtitle { color:var(--text-dim); margin-bottom:40px; font-size:16px; }
+        .login-card { background:var(--glass-bg); border:1px solid var(--glass-border); border-radius:20px; padding:40px; }
+        .qr-container { margin:30px 0; }
+        .qr-container img { max-width:200px; border:1px solid var(--glass-border); border-radius:12px; }
+        .status-msg { margin:20px 0; padding:15px; border-radius:8px; font-size:14px; }
+        .status-info { background:rgba(0,242,254,0.2); border:1px solid var(--accent); color:var(--accent); }
+        .status-success { background:rgba(46,204,113,0.2); border:1px solid #2ecc71; color:#2ecc71; }
+        .status-error { background:rgba(255,71,87,0.2); border:1px solid #ff4757; color:#ff4757; }
+        button { cursor:pointer; border:none; padding:12px 30px; border-radius:8px; font-weight:600; font-size:16px; transition:all 0.3s; }
+        .btn-primary { background:var(--accent-gradient); color:#000; width:100%; }
+        .btn-primary:hover { transform:translateY(-2px); box-shadow:0 5px 15px rgba(0,242,254,0.3); }
+        .btn-outline { background:transparent; border:1px solid var(--accent); color:var(--accent); margin-top:15px; }
+        .btn-outline:hover { background:rgba(0,242,254,0.1); }
+        .nav-links { margin-top:30px; display:flex; gap:20px; justify-content:center; }
+        .nav-links a { color:var(--text-dim); text-decoration:none; font-size:14px; }
+        .nav-links a:hover { color:var(--accent); }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="logo">网易云每日推荐</div>
+        <div class="subtitle">使用B站账号登录，开启自动上传</div>
+        <div class="login-card">
+            <h3 style="margin-bottom:20px;">B站扫码登录</h3>
+            <div class="qr-container">
+                <div id="qr-loading" class="status-info">生成二维码中...</div>
+                <img id="qr-img" style="display:none;" alt="B站登录二维码">
+            </div>
+            <div id="login-msg" class="status-info">请使用B站App扫描二维码</div>
+            <button class="btn-primary" onclick="startLogin()" id="login-btn">开始登录</button>
+            <button class="btn-outline" onclick="skipLogin()" id="skip-btn">跳过登录，仅使用合成功能</button>
+        </div>
+        <div class="nav-links">
+            <a href="/">进入合成页</a>
+            <a href="/static/upload.html">进入投稿页</a>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+        let loginPolling = null;
+
+        async function startLogin() {
+            document.getElementById('qr-loading').style.display = 'block';
+            document.getElementById('qr-img').style.display = 'none';
+            document.getElementById('login-msg').innerText = '请使用B站App扫码';
+            document.getElementById('login-msg').className = 'status-info';
+            document.getElementById('login-btn').disabled = true;
+            document.getElementById('skip-btn').disabled = true;
+            
+            try {
+                const res = await fetch(API_BASE + '/bilibili/qrcode');
+                const data = await res.json();
+                if (data.qr_path) {
+                    document.getElementById('qr-img').src = '/static/' + data.qr_path.split(/[\\/]/).pop();
+                    document.getElementById('qr-img').style.display = 'block';
+                    document.getElementById('qr-loading').style.display = 'none';
+                    pollLogin(data.raw_json);
+                } else {
+                    document.getElementById('login-msg').innerText = '获取二维码失败: ' + (data.error || '未知错误');
+                    document.getElementById('login-msg').className = 'status-error';
+                    resetButtons();
+                }
+            } catch (e) {
+                document.getElementById('login-msg').innerText = '连接失败: ' + e.message;
+                document.getElementById('login-msg').className = 'status-error';
+                resetButtons();
+            }
+        }
+
+        async function pollLogin(rawJson) {
+            if (loginPolling) clearInterval(loginPolling);
+            loginPolling = setInterval(async () => {
+                try {
+                    const res = await fetch(API_BASE + '/bilibili/check-login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(rawJson)
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        clearInterval(loginPolling);
+                        document.getElementById('login-msg').innerText = '登录成功！正在跳转...';
+                        document.getElementById('login-msg').className = 'status-success';
+                        setTimeout(() => {
+                            window.location.href = '/';
+                        }, 1500);
+                    }
+                } catch (e) {}
+            }, 2000);
+        }
+
+        function skipLogin() {
+            window.location.href = '/';
+        }
+
+        function resetButtons() {
+            document.getElementById('login-btn').disabled = false;
+            document.getElementById('skip-btn').disabled = false;
+        }
+
+        // 自动开始登录流程
+        startLogin();
+    </script>
+</body>
+</html>

@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['gui_app.py'],
+    ['gui_client.py'],
     pathex=[],
     binaries=[],
     datas=[('static', 'static')],

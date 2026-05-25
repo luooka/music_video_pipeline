@@ -1,0 +1,26 @@
+[
+  {
+    "name": "默认格式",
+    "title": "每日网易云音乐推荐",
+    "cover": "first_song",
+    "cover_custom": "",
+    "description": "song_list",
+    "description_custom": "",
+    "tags": [
+      "音乐",
+      "网易云音乐"
+    ]
+  },
+  {
+    "name": "每日网易云音乐推荐",
+    "title": "每日网易云音乐推荐",
+    "cover": "first_song",
+    "cover_custom": "",
+    "description": "song_list",
+    "description_custom": "",
+    "tags": [
+      "音乐",
+      "网易云音乐"
+    ]
+  }
+]
