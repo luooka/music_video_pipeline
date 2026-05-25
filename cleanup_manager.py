@@ -213,7 +213,7 @@ class CleanupManager:
             
         try:
             # 尝试以独占模式打开文件，如果失败则说明文件正在被使用
-            with open(file_path, 'a', encoding='utf-8') as f:
+            with open(file_path, 'ab') as f:
                 pass
             return False
         except (IOError, PermissionError):

@@ -45,57 +45,72 @@ class BilibiliAuth:
         使用绝对路径确保 cookies.json 生成在正确位置
         """
         try:
-            # 使用绝对路径，不切换工作目录
-            import json
-            import tempfile
+            print(f"\n[BILIBILI-AUTH] >>> 进入 verify_login 状态校验")
+            print(f"[BILIBILI-AUTH] 待验证凭证长度: {len(qr_json_str) if qr_json_str else 0}")
+            print(f"[BILIBILI-AUTH] 凭证内容缩略: {qr_json_str[:150] if qr_json_str else 'None'}...")
             
-            # 创建临时文件保存原始JSON
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as tmp:
-                tmp.write(qr_json_str)
-                temp_json_path = tmp.name
-            
-            try:
-                # 使用绝对路径调用stream_gears
-                # 注意：stream_gears.login_by_qrcode需要原始JSON字符串，不是文件路径
-                # 我们直接传递字符串，但确保cookies路径正确
-                
-                # 先检查当前目录是否有旧cookies
-                if os.path.exists("cookies.json"):
-                    # 如果当前目录有，移动到项目目录
-                    try:
-                        import shutil
-                        shutil.move("cookies.json", self.cookie_path)
-                    except Exception:
-                        pass
-                
-                # 直接调用，依赖stream_gears内部逻辑
-                success = stream_gears.login_by_qrcode(qr_json_str, None)
-                
-                # 检查cookies是否生成在项目目录
-                if not os.path.exists(self.cookie_path):
-                    # 检查是否生成在当前目录
-                    if os.path.exists("cookies.json"):
-                        try:
-                            import shutil
-                            shutil.move("cookies.json", self.cookie_path)
-                        except Exception as e:
-                            return {"success": False, "error": f"移动cookies失败: {str(e)}"}
-            
-            finally:
-                # 清理临时文件
+            # 先检查当前目录是否有旧cookies
+            if os.path.exists("cookies.json"):
+                print("[BILIBILI-AUTH] 当前目录发现旧 cookies.json，准备迁移...")
                 try:
-                    os.unlink(temp_json_path)
-                except Exception:
-                    pass
+                    import shutil
+                    shutil.move("cookies.json", self.cookie_path)
+                    print(f"[BILIBILI-AUTH] 旧 cookies.json 迁移成功 -> {self.cookie_path}")
+                except Exception as me:
+                    print(f"[BILIBILI-AUTH] 迁移旧 cookies 失败: {me}")
+            
+            print("[BILIBILI-AUTH] 正在调用 stream_gears.login_by_qrcode (此步骤是阻塞长轮询)...")
+            success = stream_gears.login_by_qrcode(qr_json_str, None)
+            print(f"[BILIBILI-AUTH] stream_gears.login_by_qrcode 返回值已获取。")
             
             if success:
-                # 最终确认文件存在
-                if os.path.exists(self.cookie_path):
-                    return {"success": True, "status": "success"}
+                # 将授权返回的 cookies 数据直接写入项目 cookies.json 路径
+                print(f"[BILIBILI-AUTH] 准备将登录结果写入 cookies 文件: {self.cookie_path}")
+                try:
+                    import json
+                    with open(self.cookie_path, 'w', encoding='utf-8') as f:
+                        if isinstance(success, str):
+                            f.write(success)
+                        elif isinstance(success, dict):
+                            json.dump(success, f, indent=2, ensure_ascii=False)
+                        else:
+                            # 尝试处理特殊的 Rust/C 扩展对象
+                            try:
+                                if hasattr(success, "dict"):
+                                    json.dump(success.dict(), f, indent=2, ensure_ascii=False)
+                                elif hasattr(success, "__dict__"):
+                                    json.dump(success.__dict__, f, indent=2, ensure_ascii=False)
+                                else:
+                                    # 尝试将其转换为 dict，或反序列化其文本表示
+                                    try:
+                                        # 如果其 str(success) 本身已经是标准的 JSON 格式（如 Rust 打印的 Debug 格式）
+                                        # 我们先尝试解析成 dict，然后再标准格式化写入
+                                        parsed = json.loads(str(success))
+                                        json.dump(parsed, f, indent=2, ensure_ascii=False)
+                                    except Exception:
+                                        json.dump(dict(success), f, indent=2, ensure_ascii=False)
+                            except Exception:
+                                # 最后保底方案，直接写入其 str() 表示
+                                f.write(str(success))
+                    print("[BILIBILI-AUTH] cookies.json 文件写入成功！")
+                except Exception as we:
+                    print(f"[BILIBILI-AUTH] 写入 cookies 文件失败: {we}")
+                    return {"success": False, "error": f"保存cookies文件失败: {str(we)}"}
+            
+            # 最终确认文件存在
+            if os.path.exists(self.cookie_path):
+                print("[BILIBILI-AUTH] 校验成功！已生成有效的 cookies.json 凭证文件。")
+                return {"success": True, "status": "success"}
+            else:
+                print("[BILIBILI-AUTH] 错误：在目标路径未发现 cookies.json")
                 return {"success": False, "error": f"授权成功但cookies文件未生成在: {self.cookie_path}"}
+            
+            print("[BILIBILI-AUTH] 扫码失败或已超时。")
             return {"success": False, "error": "扫码验证失败或已超时"}
         except Exception as e:
-            # 这里的异常可能是扫码超时返回的错误
+            print(f"[BILIBILI-AUTH] 校验过程捕获异常: {e}")
+            import traceback
+            traceback.print_exc()
             return {"success": False, "error": str(e)}
 
 if __name__ == "__main__":

@@ -14,12 +14,13 @@ from video_maker import VideoMaker
 from cleanup_manager import setup_cleanup_scheduler
 
 import logging
+from logging.handlers import RotatingFileHandler
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
     handlers=[
         logging.StreamHandler(sys.stderr),
-        logging.FileHandler('pipeline.log', encoding='utf-8')
+        RotatingFileHandler('pipeline.log', maxBytes=5*1024*1024, backupCount=3, encoding='utf-8')
     ]
 )
 logger = logging.getLogger('pipeline')
@@ -88,6 +89,46 @@ DEFAULT_CONFIG = {
     "video_width": 1920,
     "video_height": 1080,
     "video_fps": 24,
+    "bilibili_tid": 138,
+    "bilibili_tags": [
+        "音乐",
+        "网易云音乐",
+        "动态歌词",
+        "AI生成"
+    ],
+    "bilibili_desc_template": "本视频由 AI 自动生成。\n标题：{title}\n\n#网易云音乐 #AI视频 #动态歌词",
+    "visual": {
+        "blur_radius": 40,
+        "blend_alpha": 0.5,
+        "title_font_size": 70,
+        "artist_font_size": 35,
+        "text_x": 1050,
+        "text_start_y": 400,
+        "text_cached_y": 450
+    },
+    "video": {
+        "threads": 1,
+        "preset": "ultrafast",
+        "audio_bitrate": "128k",
+        "audio_channels": 2,
+        "audio_sample_rate": 44100,
+        "spectrum_size": "800x75"
+    },
+    "font": {
+        "paths": [
+            "msyh.ttc",
+            "simhei.ttf",
+            "C:/Windows/Fonts/msyh.ttc"
+        ],
+        "macos_paths": [
+            "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/STHeiti Light.ttc"
+        ],
+        "linux_font_names": [
+            "Noto Sans CJK SC",
+            "WenQuanYi Micro Hei"
+        ]
+    },
     "cleanup": {
         "max_age_days": 7,           # 保留最近7天的文件
         "max_total_size_gb": 10,     # 最大占用10GB空间

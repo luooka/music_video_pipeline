@@ -277,6 +277,26 @@
             word-break: break-all;
             font-size: 14px;
         }
+        .login-modal {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .login-modal-content {
+            background: var(--bg-color);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: 40px;
+            text-align: center;
+            max-width: 400px;
+        }
+        .status-success { background:rgba(46,204,113,0.2); border:1px solid #2ecc71; color:#2ecc71; padding:12px; border-radius:8px; margin:10px 0; font-size:14px; }
+        .status-error { background:rgba(255,71,87,0.2); border:1px solid #ff4757; color:#ff4757; padding:12px; border-radius:8px; margin:10px 0; font-size:14px; }
+        .status-info { background:rgba(0,242,254,0.2); border:1px solid var(--accent); color:var(--accent); padding:12px; border-radius:8px; margin:10px 0; font-size:14px; }
     </style>
 </head>
 
@@ -287,8 +307,9 @@
         <div>
             <div class="section-title">网易云配置Cookie</div>
             <div class="config-card">
-                <input type="password" id="cookie-input" placeholder="MUSIC_U Cookie">
-                <button class="btn-primary" onclick="saveConfig()">保存配置</button>
+                <input type="password" id="cookie-input" placeholder="MUSIC_U Cookie" style="margin-bottom: 12px;">
+                <button class="btn-primary" onclick="saveConfig()" style="margin-bottom: 8px;">保存配置</button>
+                <button class="btn-outline" onclick="startNeteaseLogin()" style="width: 100%; font-size: 13px; padding: 10px 15px;">扫码登录网易云</button>
             </div>
         </div>
 
@@ -545,6 +566,80 @@
             } catch (e) { }
         }
         loadInitial();
+
+        let neteaseLoginPolling = null;
+        let isNeteaseChecking = false;
+
+        async function startNeteaseLogin() {
+            document.getElementById('netease-login-modal').style.display = 'flex';
+            document.getElementById('netease-qr-img').style.display = 'none';
+            document.getElementById('netease-qr-loading').style.display = 'block';
+            document.getElementById('netease-qr-loading').innerText = '生成二维码中...';
+            document.getElementById('netease-login-msg').innerText = '请使用网易云音乐App扫码';
+            document.getElementById('netease-login-msg').className = 'status-info';
+
+            try {
+                const res = await fetch(`${API_BASE}/netease/qrcode`);
+                const data = await res.json();
+                if (data.qr_path) {
+                    document.getElementById('netease-qr-img').src = data.qr_path + '?t=' + Date.now();
+                    document.getElementById('netease-qr-img').style.display = 'block';
+                    document.getElementById('netease-qr-loading').style.display = 'none';
+                    pollNeteaseLogin(data.unikey);
+                } else {
+                    document.getElementById('netease-login-msg').innerText = '获取二维码失败: ' + (data.error || '未知错误');
+                    document.getElementById('netease-login-msg').className = 'status-error';
+                }
+            } catch (e) {
+                document.getElementById('netease-login-msg').innerText = '连接失败: ' + e.message;
+                document.getElementById('netease-login-msg').className = 'status-error';
+            }
+        }
+
+        async function pollNeteaseLogin(unikey) {
+            if (neteaseLoginPolling) clearInterval(neteaseLoginPolling);
+            isNeteaseChecking = false;
+            neteaseLoginPolling = setInterval(async () => {
+                if (isNeteaseChecking) return;
+                isNeteaseChecking = true;
+                try {
+                    const res = await fetch(`${API_BASE}/netease/check-login`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ unikey: unikey })
+                    });
+                    const data = await res.json();
+                    
+                    if (data.success && data.status === 'success') {
+                        clearInterval(neteaseLoginPolling);
+                        document.getElementById('netease-login-msg').innerText = '登录成功，已自动保存配置！';
+                        document.getElementById('netease-login-msg').className = 'status-success';
+                        
+                        document.getElementById('cookie-input').value = data.music_u;
+                        
+                        setTimeout(() => {
+                            closeNeteaseLoginModal();
+                            fetchSongs();
+                        }, 1500);
+                    } else if (data.status === 'authorizing') {
+                        document.getElementById('netease-login-msg').innerText = '已在手机扫码，请在App内点击【确认登录】';
+                        document.getElementById('netease-login-msg').className = 'status-info';
+                    } else if (data.status === 'expired') {
+                        clearInterval(neteaseLoginPolling);
+                        document.getElementById('netease-login-msg').innerText = '二维码已失效，请重新生成！';
+                        document.getElementById('netease-login-msg').className = 'status-error';
+                    }
+                } catch (e) {
+                } finally {
+                    isNeteaseChecking = false;
+                }
+            }, 2000);
+        }
+
+        function closeNeteaseLoginModal() {
+            document.getElementById('netease-login-modal').style.display = 'none';
+            if (neteaseLoginPolling) clearInterval(neteaseLoginPolling);
+        }
     </script>
 
     <div id="completion-modal" class="completion-modal" style="display:none;">
@@ -560,6 +655,18 @@
                 <button class="btn-primary" onclick="copyVideoPath()">复制路径</button>
                 <button id="open-upload-btn" class="btn-outline" style="display:none;" onclick="openUploadPage()">去投稿</button>
             </div>
+        </div>
+    </div>
+
+    <div id="netease-login-modal" class="login-modal" style="display:none;">
+        <div class="login-modal-content">
+            <h3>网易云音乐扫码登录</h3>
+            <div style="text-align:center; padding:20px 0;">
+                <div id="netease-qr-loading" class="status-info" style="margin: 10px 0;">生成二维码中...</div>
+                <img id="netease-qr-img" style="display:none; max-width:180px; margin: 15px auto; border: 1px solid var(--glass-border); border-radius: 12px;" alt="网易云登录二维码">
+            </div>
+            <div id="netease-login-msg" class="status-info" style="margin-top:10px; font-size:14px;">请使用网易云音乐App扫码</div>
+            <button class="btn-outline" onclick="closeNeteaseLoginModal()" style="margin-top:20px; width: 100%;">取消</button>
         </div>
     </div>
 </body>

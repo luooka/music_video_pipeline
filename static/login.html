@@ -84,9 +84,13 @@
             }
         }
 
+        let isChecking = false;
         async function pollLogin(rawJson) {
             if (loginPolling) clearInterval(loginPolling);
+            isChecking = false;
             loginPolling = setInterval(async () => {
+                if (isChecking) return;
+                isChecking = true;
                 try {
                     const res = await fetch(API_BASE + '/bilibili/check-login', {
                         method: 'POST',
@@ -102,7 +106,10 @@
                             window.location.href = '/';
                         }, 1500);
                     }
-                } catch (e) {}
+                } catch (e) {
+                } finally {
+                    isChecking = false;
+                }
             }, 2000);
         }
 
