@@ -35,6 +35,8 @@ class ConsoleEncodingWrapper:
         self.errors = errors
     
     def write(self, text):
+        if self.original_stream is None:
+            return
         if isinstance(text, str):
             try:
                 # 尝试使用原始编码
@@ -47,9 +49,12 @@ class ConsoleEncodingWrapper:
             self.original_stream.write(text)
     
     def flush(self):
-        self.original_stream.flush()
+        if self.original_stream is not None:
+            self.original_stream.flush()
     
     def __getattr__(self, name):
+        if self.original_stream is None:
+            raise AttributeError(name)
         return getattr(self.original_stream, name)
 
 # 仅在需要时包装标准输出
@@ -64,8 +69,9 @@ def setup_console_encoding():
             pass
         
         # 包装标准输出
-        if not isinstance(sys.stdout, ConsoleEncodingWrapper):
+        if sys.stdout is not None and not isinstance(sys.stdout, ConsoleEncodingWrapper):
             sys.stdout = ConsoleEncodingWrapper(sys.stdout, encoding='utf-8', errors='replace')
+        if sys.stderr is not None and not isinstance(sys.stderr, ConsoleEncodingWrapper):
             sys.stderr = ConsoleEncodingWrapper(sys.stderr, encoding='utf-8', errors='replace')
     else:
         # Linux/macOS: 通常已经支持UTF-8
@@ -310,13 +316,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         self._log(f"  📝 已生成歌单列表: {list_file}")
         return list_file
 
-    async def process_songs(self, songs: list, run_dir: Path):
+    async def process_songs(self, songs: list, run_dir: Path, is_cancelled_callback=None):
         audio_dir, images_dir, lyrics_dir, clips_dir = [run_dir / d for d in ["audio", "images", "lyrics", "clips"]]
         for d in [audio_dir, images_dir, lyrics_dir, clips_dir]: d.mkdir(parents=True, exist_ok=True)
 
         successful_clips = []
         failed_songs = []
         for i, song in enumerate(songs, 1):
+            if is_cancelled_callback and is_cancelled_callback():
+                self._log("检测到取消信号，终止后续歌曲合成流程。")
+                break
             self._log(f"\n[{i}/{len(songs)}] [SONG] {song['name']} - {', '.join(song['artists'])}")
             
             # 1. 音频
@@ -360,9 +369,17 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             clip_path = clips_dir / f"clip_{i:02d}_{song['id']}.mp4"
             if not clip_path.exists():
                 self._log("  -> 合成播放器视频片段...")
-                res = self.video_maker.create_clip(str(bg_path), str(audio_path), str(clip_path), 
-                                                str(ass_path) if has_sub else None, str(cover_path), 
-                                                song.get("duration_ms", 0) / 1000)
+                loop = asyncio.get_running_loop()
+                res = await loop.run_in_executor(
+                    None,
+                    self.video_maker.create_clip,
+                    str(bg_path),
+                    str(audio_path),
+                    str(clip_path),
+                    str(ass_path) if has_sub else None,
+                    str(cover_path),
+                    song.get("duration_ms", 0) / 1000
+                )
                 if res: successful_clips.append(str(clip_path))
             else:
                 self._log("  -> 正在使用视频缓存 [OK]")

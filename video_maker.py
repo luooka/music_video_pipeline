@@ -44,8 +44,9 @@ atexit.register(_cleanup_ffmpeg_processes)
 # Windows Job Object "越狱" flag
 # AstrBot 会把所有子进程绑入一个 Job Object 并限制内存总量。
 # CREATE_BREAKAWAY_FROM_JOB 会让 FFmpeg 脱离 Job Object，从而逃脱内存限制。
+# CREATE_NO_WINDOW (0x08000000) 会隐藏黑色的控制台窗口。
 # 但需要配合进程跟踪和清理机制。
-_FFMPEG_CREATION_FLAGS = subprocess.CREATE_BREAKAWAY_FROM_JOB if sys.platform == "win32" else 0
+_FFMPEG_CREATION_FLAGS = (subprocess.CREATE_BREAKAWAY_FROM_JOB | 0x08000000) if sys.platform == "win32" else 0
 
 
 class VideoMaker:
@@ -156,7 +157,7 @@ class VideoMaker:
                             cmd,
                             stdout=subprocess.DEVNULL,
                             stderr=f,
-                            creationflags=0
+                            creationflags=(0x08000000 if sys.platform == "win32" else 0)
                         )
                     else:
                         raise pe
@@ -257,7 +258,7 @@ class VideoMaker:
                             cmd,
                             stdout=subprocess.DEVNULL,
                             stderr=f,
-                            creationflags=0
+                            creationflags=(0x08000000 if sys.platform == "win32" else 0)
                         )
                     else:
                         raise pe

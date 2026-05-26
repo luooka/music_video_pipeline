@@ -35,13 +35,66 @@ async def index():
     return FileResponse(static_dir / "index.html")
 
 # 全局处理器状态
+class Task:
+    def __init__(self, songs, combine=True, auto_upload=False, upload_format_name=""):
+        self.id = str(uuid.uuid4())[:8]  # 简短的 8 位 UUID，如 "a1b2c3d4"
+        self.songs = songs
+        self.combine = combine
+        self.auto_upload = auto_upload
+        self.upload_format_name = upload_format_name
+        self.status = "waiting"  # waiting, running, completed, cancelled, failed
+        self.progress = 0
+        self.current_status_text = "等待中..."
+        self.logs = []
+        self.created_at = time.strftime("%H:%M:%S")
+        self.final_video_path = ""
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "songs_count": len(self.songs),
+            "songs_names": [s["name"] for s in self.songs],
+            "combine": self.combine,
+            "auto_upload": self.auto_upload,
+            "upload_format_name": self.upload_format_name,
+            "status": self.status,
+            "progress": self.progress,
+            "current_status_text": self.current_status_text,
+            "logs": self.logs[-50:],  # 最多返回最新的 50 条日志
+            "created_at": self.created_at,
+            "final_video_path": self.final_video_path
+        }
+
+class QueueState:
+    def __init__(self):
+        self.tasks = []
+
+queue_state = QueueState()
+
 class GlobalState:
     processor = None
-    is_running = False
-    current_status = "Idle"
-    logs = []
+    
+    @property
+    def is_running(self):
+        return any(t.status == "running" for t in queue_state.tasks)
+
+    @property
+    def current_status(self):
+        running_task = next((t for t in queue_state.tasks if t.status == "running"), None)
+        return running_task.current_status_text if running_task else "Idle"
+
+    @property
+    def logs(self):
+        running_task = next((t for t in queue_state.tasks if t.status == "running"), None)
+        if running_task:
+            return running_task.logs
+        if queue_state.tasks:
+            return queue_state.tasks[-1].logs
+        return []
 
 state = GlobalState()
+import uuid
+import time
 
 class ConfigUpdate(BaseModel):
     netease_cookie: str = Field(..., description="网易云 MUSIC_U Cookie 内容")
@@ -141,107 +194,223 @@ async def get_playlist_tracks(id: int, limit: int = 20, offset: int = 0):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.on_event("startup")
+async def startup_event():
+    # 启动异步后台任务队列 worker
+    asyncio.create_task(task_queue_worker())
+
+async def task_queue_worker():
+    while True:
+        try:
+            # 寻找排在最前面的等待中的任务
+            task = next((t for t in queue_state.tasks if t.status == "waiting"), None)
+            if not task:
+                await asyncio.sleep(1)
+                continue
+
+            # 开始运行任务
+            task.status = "running"
+            task.progress = 0
+            task.current_status_text = "初始化任务..."
+            
+            await run_single_task(task)
+            
+        except Exception as e:
+            print(f"[Queue Worker Error] {e}")
+            await asyncio.sleep(1)
+
+async def run_single_task(task: Task):
+    from datetime import datetime
+    
+    def status_logger(msg: str):
+        task.current_status_text = msg
+        task.logs.append(msg)
+        
+        # 自动进度百分比分析
+        text = msg.lower()
+        if "starting processing" in text or "fetch" in text:
+            task.progress = 15
+        elif "download" in text or "processing song" in text or "下载" in text:
+            task.progress = 35
+        elif "ffmpeg" in text or "spectrum" in text or "画幅" in text or "频谱" in text:
+            task.progress = 60
+        elif "stitch" in text or "concat" in text or "stitching" in text or "拼接" in text or "合成" in text:
+            task.progress = 80
+        elif "upload" in text or "bilibili" in text or "上传" in text:
+            task.progress = 95
+        
+        if "[ok] done!" in text:
+            task.progress = 100
+
+    try:
+        proc = get_processor()
+        proc.set_status_callback(status_logger)
+        
+        config = load_config()
+        today = datetime.now().strftime("%Y%m%d")
+        run_dir = Path(config["output_dir"]) / today
+        run_dir.mkdir(parents=True, exist_ok=True)
+        
+        status_logger(f"Starting processing {len(task.songs)} songs...")
+        
+        def is_cancelled():
+            return task.status == "cancelled"
+            
+        if is_cancelled():
+            return
+            
+        successful_clips = await proc.process_songs(task.songs, run_dir, is_cancelled_callback=is_cancelled)
+        
+        if is_cancelled():
+            status_logger("[FAIL] 任务已被中途取消")
+            return
+            
+        if task.combine and successful_clips:
+            status_logger("Processing Stitching final video...")
+            final_path = run_dir / f"daily_music_{today}_{task.id}.mp4"
+            
+            if is_cancelled():
+                status_logger("[FAIL] 任务已被中途取消")
+                return
+                
+            loop = asyncio.get_running_loop()
+            success = await loop.run_in_executor(None, proc.video_maker.concat_clips, successful_clips, str(final_path))
+            
+            if is_cancelled():
+                try:
+                    if final_path.exists():
+                        final_path.unlink()
+                except:
+                    pass
+                status_logger("[FAIL] 任务已被中途取消")
+                return
+                
+            if success:
+                task.final_video_path = str(final_path)
+                status_logger(f"[OK] Done! Final video: {final_path}")
+                proc.save_song_list(task.songs, run_dir)
+                
+                if task.auto_upload:
+                    status_logger("Auto-upload enabled, preparing upload...")
+                    try:
+                        formats = load_upload_formats()
+                        fmt = next((f for f in formats if f["name"] == task.upload_format_name), formats[0] if formats else None)
+                        if fmt:
+                            title = fmt["title"]
+                            desc = fmt["description"]
+                            if fmt["description"] == "song_list":
+                                desc = "\n".join([f"{i+1}. {s['name']} - {', '.join(s.get('artists', []))}" for i, s in enumerate(task.songs)])
+                            elif fmt["description"] == "custom":
+                                desc = fmt["description_custom"]
+                            
+                            cover = ""
+                            if fmt["cover"] == "first_song" and task.songs:
+                                first = task.songs[0]
+                                cover = str(run_dir / f"{first['id']}_cover.png")
+                                if not os.path.exists(cover):
+                                    cover = ""
+                            elif fmt["cover"] == "custom":
+                                cover = fmt["cover_custom"]
+                            
+                            status_logger(f"Uploading to Bilibili: {title}")
+                            uploader = BilibiliUploader(config)
+                            result = await loop.run_in_executor(
+                                None,
+                                uploader.upload,
+                                str(final_path),
+                                title,
+                                desc,
+                                fmt["tags"],
+                                138,
+                                cover
+                            )
+                            if result.get("success") or result.get("bvid"):
+                                status_logger(f"[OK] Upload success! bvid: {result.get('bvid', '')}")
+                            else:
+                                status_logger(f"[FAIL] Upload failed: {result.get('error', str(result))}")
+                        else:
+                            status_logger("[FAIL] No upload format found")
+                    except Exception as ue:
+                        status_logger(f"[FAIL] Auto-upload error: {str(ue)}")
+            else:
+                status_logger("[FAIL] Stitching failed")
+                task.status = "failed"
+        else:
+            if not successful_clips:
+                status_logger("[FAIL] 没有生成任何视频片段")
+                task.status = "failed"
+            else:
+                status_logger("[OK] Processing finished (No stitching)")
+                task.progress = 100
+                task.status = "completed"
+                
+        if task.status == "running":
+            task.status = "completed"
+            task.progress = 100
+            
+    except Exception as e:
+        status_logger(f"[FAIL] Error occurred: {str(e)}")
+        task.status = "failed"
+
 @app.get("/status", summary="查询合成状态", tags=["任务执行"])
 def get_status():
-    """查询当前是否有任务正在运行，并返回最新的 20 条实时日志"""
+    """查询当前任务队列的状态及日志，兼容旧接口"""
     return {
         "is_running": state.is_running,
         "current_status": state.current_status,
-        "logs": state.logs[-20:]
+        "logs": state.logs[-20:],
+        "tasks": [t.to_dict() for t in queue_state.tasks]
     }
-
-def status_logger(msg: str):
-    state.current_status = msg
-    state.logs.append(msg)
 
 @app.post("/generate", summary="开始异步合成视频", tags=["任务执行"])
 async def generate_video(req: GenerateRequest):
     """
     接收歌曲列表，启动后台异步任务进行下载、封面美化、律动提取、歌词合成及视频拼接。
-    系统保证同一时间只有一个合成任务在运行。
+    将任务加入等待队列中，支持多个任务顺序执行。
     """
-    if state.is_running:
-        raise HTTPException(status_code=400, detail="Pipeline is already running")
-    
-    state.is_running = True
-    state.logs = []
-    
-    async def run_task():
-        try:
-            from datetime import datetime
-            proc = get_processor()
-            proc.set_status_callback(status_logger)
-            
-            config = load_config()
-            today = datetime.now().strftime("%Y%m%d")
-            run_dir = Path(config["output_dir"]) / today
-            run_dir.mkdir(parents=True, exist_ok=True)
-            
-            status_logger(f"Starting processing {len(req.songs)} songs...")
-            successful_clips = await proc.process_songs(req.songs, run_dir)
-            
-            if req.combine and successful_clips:
-                status_logger("Processing Stitching final video...")
-                final_path = run_dir / f"daily_music_{today}.mp4"
-                if proc.video_maker.concat_clips(successful_clips, str(final_path)):
-                    status_logger(f"[OK] Done! Final video: {final_path}")
-                    # 生成歌单文本
-                    proc.save_song_list(req.songs, run_dir)
-                    
-                    # 自动上传
-                    if req.auto_upload:
-                        status_logger("Auto-upload enabled, preparing upload...")
-                        try:
-                            from bilibili_uploader import BilibiliUploader
-                            formats = load_upload_formats()
-                            fmt = next((f for f in formats if f["name"] == req.upload_format_name), formats[0] if formats else None)
-                            if fmt:
-                                # 构建标题和简介
-                                title = fmt["title"]
-                                desc = fmt["description"]
-                                if fmt["description"] == "song_list":
-                                    desc = "\n".join([f"{i+1}. {s['name']} - {', '.join(s.get('artists', []))}" for i, s in enumerate(req.songs)])
-                                elif fmt["description"] == "custom":
-                                    desc = fmt["description_custom"]
-                                # 获取封面
-                                cover = ""
-                                if fmt["cover"] == "first_song" and req.songs:
-                                    first = req.songs[0]
-                                    cover = str(run_dir / f"{first['id']}_cover.png")
-                                    if not os.path.exists(cover):
-                                        cover = ""
-                                elif fmt["cover"] == "custom":
-                                    cover = fmt["cover_custom"]
-                                
-                                status_logger(f"Uploading to Bilibili: {title}")
-                                uploader = BilibiliUploader(config)
-                                result = uploader.upload(
-                                    video_path=str(final_path),
-                                    title=title,
-                                    description=desc,
-                                    tags=fmt["tags"],
-                                    cover=cover
-                                )
-                                if result.get("success") or result.get("bvid"):
-                                    status_logger(f"[OK] Upload success! bvid: {result.get('bvid', '')}")
-                                else:
-                                    status_logger(f"[FAIL] Upload failed: {result.get('error', str(result))}")
-                            else:
-                                status_logger("[FAIL] No upload format found")
-                        except Exception as ue:
-                            status_logger(f"[FAIL] Auto-upload error: {str(ue)}")
-                else:
-                    status_logger("[FAIL] Stitching failed")
-            else:
-                status_logger("[OK] Processing finished (No stitching)")
-                
-        except Exception as e:
-            status_logger(f"[FAIL] Error occurred: {str(e)}")
-        finally:
-            state.is_running = False
+    task = Task(
+        songs=req.songs,
+        combine=req.combine,
+        auto_upload=req.auto_upload,
+        upload_format_name=req.upload_format_name
+    )
+    queue_state.tasks.append(task)
+    return {"status": "started", "task_id": task.id}
 
-    asyncio.create_task(run_task())
-    return {"status": "started"}
+@app.post("/tasks/{task_id}/cancel", summary="取消排队或执行中的任务", tags=["任务执行"])
+def cancel_task(task_id: str):
+    task = next((t for t in queue_state.tasks if t.id == task_id), None)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+        
+    if task.status in ["completed", "cancelled", "failed"]:
+        return {"status": "success", "message": "Task already finished"}
+        
+    task.status = "cancelled"
+    task.current_status_text = "任务已被用户取消"
+    task.logs.append("[i] 任务已被用户中途取消。")
+    
+    # 如果该任务正在运行，立即终止所有当前正在运行的 FFmpeg 进程
+    from video_maker import _cleanup_ffmpeg_processes
+    try:
+        _cleanup_ffmpeg_processes()
+    except Exception as e:
+        print(f"Error cleaning up FFmpeg: {e}")
+        
+    return {"status": "success"}
+
+@app.delete("/tasks/{task_id}", summary="删除任务列表中的任务", tags=["任务执行"])
+def delete_task(task_id: str):
+    task = next((t for t in queue_state.tasks if t.id == task_id), None)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+        
+    # 如果是运行中或等待中，先执行取消
+    if task.status in ["running", "waiting"]:
+        cancel_task(task_id)
+        
+    queue_state.tasks.remove(task)
+    return {"status": "success"}
 
 @app.post("/generate_by_query", summary="根据歌名直接合成", tags=["任务执行"])
 async def generate_by_query(req: QueryRequest):

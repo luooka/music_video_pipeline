@@ -10,7 +10,10 @@ class BilibiliUploader:
         self.default_tid = self.config.get("bilibili_tid", 138)
         self.default_tags = self.config.get("bilibili_tags", ["音乐", "网易云音乐", "动态歌词"])
         # 使用与 bilibili_auth 相同的绝对路径，确保无缝读写 cookies.json
-        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        if getattr(sys, 'frozen', False):
+            self.base_dir = os.path.dirname(sys.executable)
+        else:
+            self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.cookie_file = os.path.join(self.base_dir, "cookies.json")
 
     def upload(self, video_path: str, title: str, description: str = "", tags: list = None, tid: int = None, cover: str = ""):

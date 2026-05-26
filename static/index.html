@@ -556,6 +556,97 @@
             border: 1px dashed var(--accent);
         }
 
+        /* 任务队列高级样式 */
+        .sidebar-task-item {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+            font-size: 12px;
+            transition: all 0.3s;
+            margin-bottom: 8px;
+        }
+        .sidebar-task-item:hover {
+            border-color: var(--accent);
+            background: rgba(255, 255, 255, 0.04);
+        }
+        .sidebar-task-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .task-id {
+            font-weight: 700;
+            color: var(--text-main);
+        }
+        .task-status-badge {
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 700;
+        }
+        .status-waiting {
+            background: rgba(241, 196, 15, 0.15) !important;
+            color: #f1c40f !important;
+            border: 1px solid rgba(241, 196, 15, 0.3) !important;
+        }
+        .status-running {
+            background: rgba(0, 242, 254, 0.15) !important;
+            color: var(--accent) !important;
+            border: 1px solid rgba(0, 242, 254, 0.3) !important;
+        }
+        .status-completed {
+            background: rgba(46, 204, 113, 0.15) !important;
+            color: var(--success) !important;
+            border: 1px solid rgba(46, 204, 113, 0.3) !important;
+        }
+        .status-failed {
+            background: rgba(231, 76, 60, 0.15) !important;
+            color: var(--error) !important;
+            border: 1px solid rgba(231, 76, 60, 0.3) !important;
+        }
+        .status-cancelled {
+            background: rgba(142, 142, 159, 0.15) !important;
+            color: var(--text-dim) !important;
+            border: 1px solid rgba(142, 142, 159, 0.3) !important;
+        }
+        .task-progress-container {
+            width: 100%;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 2px;
+        }
+        .task-progress-bar {
+            height: 100%;
+            background: var(--accent-gradient);
+            transition: width 0.4s;
+        }
+        .task-actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 2px;
+        }
+        .task-action-btn {
+            cursor: pointer;
+            background: transparent;
+            border: none;
+            color: var(--text-dim);
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+        .task-action-btn:hover {
+            background: rgba(255, 71, 87, 0.15);
+            color: #ff4757;
+        }
+
         .status-success { background:rgba(46,204,113,0.1) !important; border:1px solid var(--success) !important; color:var(--success) !important; padding:12px; border-radius:8px; margin:10px 0; font-size:14px; }
         .status-error { background:rgba(255,71,87,0.1) !important; border:1px solid var(--error) !important; color:var(--error) !important; padding:12px; border-radius:8px; margin:10px 0; font-size:14px; }
         .status-info { background:rgba(0,242,254,0.1) !important; border:1px solid var(--info) !important; color:var(--info) !important; padding:12px; border-radius:8px; margin:10px 0; font-size:14px; }
@@ -762,8 +853,13 @@
         </div>
 
         <div>
-            <div class="section-title">状态分析</div>
-            <div id="status-display" style="color: var(--text-dim); font-size: 14px;">准备就绪</div>
+            <div class="section-title">合成任务队列</div>
+            <div class="config-card" id="task-queue-card" style="padding: 12px; display: flex; flex-direction: column; gap: 10px; max-height: 250px; overflow-y: auto; background: rgba(0, 0, 0, 0.2);">
+                <div style="text-align: center; color: var(--text-dim); font-size: 13px; padding: 10px 0;">
+                    暂无合成任务
+                </div>
+            </div>
+            <div id="status-display" style="color: var(--text-dim); font-size: 12px; margin-top: 8px; padding-left: 4px;">准备就绪</div>
         </div>
 
         <div>
@@ -816,6 +912,7 @@
                 </div>
             </div>
             <div class="btn-group" style="align-items: center; gap: 8px;">
+                <button class="btn-outline" onclick="forceRefreshSongs()" style="font-size: 13px; border-radius: 20px;">刷新列表</button>
                 <button class="btn-outline" onclick="selectAll()" style="font-size: 13px; border-radius: 20px;">全选</button>
                 <button class="btn-outline" onclick="deselectAll()" style="font-size: 13px; border-radius: 20px;">清空</button>
             </div>
@@ -871,6 +968,38 @@
             console.error("加载缓存选择失败", e);
         }
         updateActionBar();
+
+        function saveSessionCache() {
+            try {
+                sessionStorage.setItem('music_pipeline_all_songs', JSON.stringify(allSongs));
+                sessionStorage.setItem('music_pipeline_active_playlist_id', activePlaylistId);
+                sessionStorage.setItem('music_pipeline_pagination_mode', paginationMode);
+                sessionStorage.setItem('music_pipeline_current_page', currentPage);
+                sessionStorage.setItem('music_pipeline_total_count', totalCount);
+                sessionStorage.setItem('music_pipeline_search_query', currentSearchQuery);
+            } catch (e) {
+                console.error("保存缓存失败", e);
+            }
+        }
+
+        function forceRefreshSongs() {
+            sessionStorage.removeItem('music_pipeline_all_songs');
+            sessionStorage.removeItem('music_pipeline_active_playlist_id');
+            sessionStorage.removeItem('music_pipeline_pagination_mode');
+            sessionStorage.removeItem('music_pipeline_current_page');
+            sessionStorage.removeItem('music_pipeline_total_count');
+            sessionStorage.removeItem('music_pipeline_search_query');
+            
+            searchCache = {}; // 清空检索缓存
+            
+            if (paginationMode === 'search') {
+                executeSearch(true);
+            } else if (paginationMode === 'playlist') {
+                selectPlaylist(activePlaylistId, true);
+            } else {
+                fetchSongs();
+            }
+        }
 
         // 歌单高级管理状态
         let allPlaylists = [];
@@ -971,6 +1100,7 @@
                     document.getElementById('status-display').innerText = `已加载第 ${offset + 1} - ${offset + allSongs.length} 首，共计 ${totalCount} 首`;
                     
                     updatePaginationControls();
+                    saveSessionCache();
                 } catch (e) {
                     document.getElementById('status-display').innerText = "加载歌单歌曲失败";
                     document.getElementById('songs-grid').innerHTML = `
@@ -1003,6 +1133,7 @@
                 renderSongs();
                 document.getElementById('status-display').innerText = `已加载 ${allSongs.length} 首推荐`;
                 loadUploadFormats();
+                saveSessionCache();
             } catch (e) {
                 document.getElementById('status-display').innerText = "加载失败，请检查网络或登录状态";
             }
@@ -1166,71 +1297,256 @@
             }
         }
 
+        // Toast 消息提示器
+        function showToast(message, type = "success") {
+            const toast = document.createElement('div');
+            toast.style.position = 'fixed';
+            toast.style.bottom = '110px';
+            toast.style.right = '40px';
+            toast.style.zIndex = '9999';
+            toast.style.padding = '12px 24px';
+            toast.style.borderRadius = '12px';
+            toast.style.fontSize = '13px';
+            toast.style.fontWeight = '600';
+            toast.style.boxShadow = '0 8px 30px rgba(0,0,0,0.5)';
+            toast.style.backdropFilter = 'blur(15px)';
+            toast.style.transition = 'all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)';
+            toast.style.transform = 'translateY(50px) scale(0.8)';
+            toast.style.opacity = '0';
+            
+            if (type === "success") {
+                toast.style.background = 'rgba(46, 204, 113, 0.15)';
+                toast.style.border = '1px solid rgba(46, 204, 113, 0.4)';
+                toast.style.color = '#2ecc71';
+            } else {
+                toast.style.background = 'rgba(255, 71, 87, 0.15)';
+                toast.style.border = '1px solid rgba(255, 71, 87, 0.4)';
+                toast.style.color = '#ff4757';
+            }
+            
+            toast.innerText = message;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.transform = 'translateY(0) scale(1)';
+                toast.style.opacity = '1';
+            }, 50);
+            
+            setTimeout(() => {
+                toast.style.transform = 'translateY(-20px) scale(0.9)';
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 400);
+            }, 3000);
+        }
+
         async function startGenerate() {
             if (selectedSongs.length === 0) return;
             const autoUpload = document.getElementById('auto-upload').checked;
             const formatName = autoUpload ? document.getElementById('upload-format').value : '';
 
-            const res = await fetch(`${API_BASE}/generate`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    songs: selectedSongs, 
-                    combine: true, 
-                    auto_upload: autoUpload,
-                    upload_format_name: formatName 
-                })
-            });
+            try {
+                const res = await fetch(`${API_BASE}/generate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        songs: selectedSongs, 
+                        combine: true, 
+                        auto_upload: autoUpload,
+                        upload_format_name: formatName 
+                    })
+                });
 
-            if (res.ok) {
-                // 平滑重定向至独立大盘监控页
-                window.location.href = '/static/logs.html';
+                if (res.ok) {
+                    showToast("合成任务已成功加入后台排队！");
+                    deselectAll();
+                    // 立即触发一次状态刷新
+                    setTimeout(checkQueueOnce, 500);
+                } else {
+                    const err = await res.json();
+                    showToast("启动合成失败: " + (err.detail || "未知错误"), "error");
+                }
+            } catch(e) {
+                showToast("请求服务失败，请检查网络", "error");
             }
         }
 
         let pollInterval;
-        let pendingAutoUpload = false;
+        let completedTaskIds = new Set();
+        try {
+            const savedShown = sessionStorage.getItem('music_pipeline_shown_completed_tasks');
+            if (savedShown) {
+                completedTaskIds = new Set(JSON.parse(savedShown));
+            }
+        } catch (e) {}
         
-        function startStatusPolling() {
-            if (pollInterval) clearInterval(pollInterval);
-            pendingAutoUpload = document.getElementById('auto-upload').checked;
-            pollInterval = setInterval(async () => {
-                const res = await fetch(`${API_BASE}/status`);
-                const data = await res.json();
-
-                const consoleDiv = document.getElementById('console');
-                consoleDiv.innerHTML = data.logs.map(l => `<div>> ${l}</div>`).join('');
-                consoleDiv.scrollTop = consoleDiv.scrollHeight;
-
-                if (!data.is_running) {
-                    clearInterval(pollInterval);
-                    updateStepperFromLogs(data.logs);
-                    document.getElementById('status-display').innerText = "合成大功告成！";
-                    showCompletionModal(data.logs);
-                } else {
-                    document.getElementById('status-display').innerText = "正在疯狂合成中...";
-                    updateStepperFromLogs(data.logs);
+        function renderTaskQueue(tasks) {
+            const container = document.getElementById('task-queue-card');
+            if (!container) return;
+            
+            if (!tasks || tasks.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; color: var(--text-dim); font-size: 13px; padding: 10px 0;">
+                        暂无合成任务
+                    </div>
+                `;
+                return;
+            }
+            
+            container.innerHTML = tasks.map(task => {
+                let statusColor = "var(--text-dim)";
+                let statusBg = "rgba(255,255,255,0.05)";
+                let statusText = "排队中";
+                
+                if (task.status === "waiting") {
+                    statusColor = "var(--info)";
+                    statusBg = "rgba(0, 242, 254, 0.1)";
+                    statusText = "排队中";
+                } else if (task.status === "running") {
+                    statusColor = "var(--accent)";
+                    statusBg = "rgba(0, 242, 254, 0.15)";
+                    statusText = "合成中";
+                } else if (task.status === "completed") {
+                    statusColor = "var(--success)";
+                    statusBg = "rgba(46, 204, 113, 0.1)";
+                    statusText = "已完成";
+                } else if (task.status === "cancelled") {
+                    statusColor = "#ff9f43";
+                    statusBg = "rgba(255, 159, 67, 0.1)";
+                    statusText = "已取消";
+                } else if (task.status === "failed") {
+                    statusColor = "var(--error)";
+                    statusBg = "rgba(255, 71, 87, 0.1)";
+                    statusText = "失败";
                 }
-            }, 1000);
+                
+                let actionBtn = "";
+                if (task.status === "waiting" || task.status === "running") {
+                    actionBtn = `<button onclick="cancelTask('${task.id}')" style="background: rgba(255,71,87,0.1); border: 1px solid rgba(255,71,87,0.3); color: var(--error); padding: 4px 10px; font-size: 11px; border-radius: 12px; cursor: pointer; font-weight: bold; transition: all 0.2s;">取消</button>`;
+                } else {
+                    actionBtn = `<button onclick="deleteTask('${task.id}')" style="background: rgba(255,255,255,0.03); border: 1px solid var(--glass-border); color: var(--text-dim); padding: 4px 10px; font-size: 11px; border-radius: 12px; cursor: pointer; transition: all 0.2s;">删除</button>`;
+                }
+                
+                const progressPct = task.progress || 0;
+                const showProgress = (task.status === "running" || task.status === "waiting" || task.status === "completed");
+                
+                return `
+                    <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--glass-border); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px; transition: all 0.3s; text-align: left;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-size: 12px; font-weight: 700; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 145px;" title="${task.songs_names.join(', ')}">
+                                任务 #${task.id} (${task.songs_count}首)
+                            </span>
+                            <span style="background: ${statusBg}; color: ${statusColor}; font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 20px;">
+                                ${statusText}
+                            </span>
+                        </div>
+                        
+                        <div style="font-size: 11px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                            ${task.current_status_text}
+                        </div>
+                        
+                        ${showProgress ? `
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <div style="flex: 1; height: 4px; background: rgba(255,255,255,0.05); border-radius: 2px; overflow: hidden;">
+                                <div style="width: ${progressPct}%; height: 100%; background: var(--accent-gradient); transition: width 0.3s;"></div>
+                            </div>
+                            <span style="font-size: 10px; font-weight: 800; color: var(--text-dim); min-width: 24px; text-align: right;">${progressPct}%</span>
+                        </div>
+                        ` : ''}
+                        
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 2px; font-size: 10px; color: var(--text-dim);">
+                            <span>创建于: ${task.created_at}</span>
+                            ${actionBtn}
+                        </div>
+                    </div>
+                `;
+            }).join('');
         }
 
-        function showCompletionModal(logs) {
-            const hasUpload = logs.some(l => l.includes('Upload success'));
-            const uploadFailed = logs.some(l => l.includes('Upload failed') || l.includes('Auto-upload error'));
+        async function cancelTask(id) {
+            if (!confirm("确定要取消此合成任务吗？")) return;
+            try {
+                const res = await fetch(`${API_BASE}/tasks/${id}/cancel`, { method: 'POST' });
+                if (res.ok) {
+                    showToast("合成任务取消指令已成功下发！");
+                    checkQueueOnce();
+                } else {
+                    showToast("取消失败，请刷新重试", "error");
+                }
+            } catch(e) {
+                showToast("连接失败，请检查网络", "error");
+            }
+        }
+
+        async function deleteTask(id) {
+            if (!confirm("确定要删除此任务记录吗？")) return;
+            try {
+                const res = await fetch(`${API_BASE}/tasks/${id}`, { method: 'DELETE' });
+                if (res.ok) {
+                    showToast("任务记录已成功清除！");
+                    checkQueueOnce();
+                } else {
+                    showToast("删除失败，请刷新重试", "error");
+                }
+            } catch(e) {
+                showToast("连接失败，请检查网络", "error");
+            }
+        }
+
+        async function checkQueueOnce() {
+            try {
+                const res = await fetch(`${API_BASE}/status`);
+                if (!res.ok) return;
+                const data = await res.json();
+                renderTaskQueue(data.tasks);
+            } catch(e) {}
+        }
+
+        function startStatusPolling() {
+            if (pollInterval) clearInterval(pollInterval);
+            pollInterval = setInterval(async () => {
+                try {
+                    const res = await fetch(`${API_BASE}/status`);
+                    if (!res.ok) return;
+                    const data = await res.json();
+
+                    // 1. 渲染队列卡片
+                    renderTaskQueue(data.tasks);
+
+                    // 2. 检查是否有新完结的任务需要展示 Modal / Toast
+                    if (data.tasks && data.tasks.length > 0) {
+                        data.tasks.forEach(task => {
+                            if (task.status === 'completed' && !completedTaskIds.has(task.id)) {
+                                completedTaskIds.add(task.id);
+                                try {
+                                    sessionStorage.setItem('music_pipeline_shown_completed_tasks', JSON.stringify(Array.from(completedTaskIds)));
+                                } catch (e) {}
+                                showToast(`任务 #${task.id} 视频合成已全部完成！`);
+                                showCompletionModalForTask(task);
+                            } else if (task.status === 'failed' && !completedTaskIds.has(task.id)) {
+                                completedTaskIds.add(task.id);
+                                try {
+                                    sessionStorage.setItem('music_pipeline_shown_completed_tasks', JSON.stringify(Array.from(completedTaskIds)));
+                                } catch (e) {}
+                                showToast(`任务 #${task.id} 视频合成不幸失败！`, "error");
+                            }
+                        });
+                    }
+                } catch (e) {
+                    console.error("轮询状态失败", e);
+                }
+            }, 1500);
+        }
+
+        function showCompletionModalForTask(task) {
+            document.getElementById('video-path').innerText = task.final_video_path || '未找到视频路径';
             
-            // 解析视频路径
-            const finalLog = logs.find(l => l.includes('Final video:'));
-            const finalPath = finalLog ? finalLog.split('Final video:')[1].trim() : '';
+            const hasUpload = task.logs && task.logs.some(l => l.includes('Upload success'));
+            const uploadFailed = task.logs && task.logs.some(l => l.includes('Upload failed') || l.includes('Auto-upload error'));
             
-            document.getElementById('video-path').innerText = finalPath || '未找到视频路径';
-            
-            if (pendingAutoUpload) {
+            if (task.auto_upload) {
                 if (hasUpload) {
-                    const bvidLog = logs.find(l => l.includes('Upload success'));
-                    const bvid = bvidLog ? bvidLog.split('bvid:')[1].trim().replace(')','') : '';
                     document.getElementById('upload-info').innerHTML = 
-                        '<span style="color:#2ecc71;">已自动上传到B站！</span><br>' +
-                        '<span class="video-link">bvid: ' + bvid + '</span>';
+                        '<span style="color:#2ecc71;">已自动上传到B站！</span>';
                 } else if (uploadFailed) {
                     document.getElementById('upload-info').innerHTML = 
                         '<span style="color:#ff4757;">自动上传失败，请手动投稿。</span>';
@@ -1253,11 +1569,12 @@
         function copyVideoPath() {
             const path = document.getElementById('video-path').innerText;
             navigator.clipboard.writeText(path);
-            alert('路径已复制');
+            alert('路径已成功复制到剪贴板！');
         }
 
         function openUploadPage() {
-            window.open('/static/upload.html', '_blank');
+            const path = document.getElementById('video-path').innerText;
+            window.location.href = '/static/upload.html?video_path=' + encodeURIComponent(path);
         }
 
         /* Premium UI Search & Stepper Dashboard Helpers */
@@ -1404,6 +1721,7 @@
                 document.getElementById('status-display').innerText = `已检索到 ${allSongs.length} 首歌曲，共计 ${totalCount} 首 (来自本地缓存)`;
                 
                 updatePaginationControls();
+                saveSessionCache();
                 
                 // 滚动回顶部
                 document.getElementById('songs-grid').scrollTop = 0;
@@ -1435,6 +1753,7 @@
                 document.getElementById('status-display').innerText = `已检索到 ${allSongs.length} 首歌曲，共计 ${totalCount} 首`;
                 
                 updatePaginationControls();
+                saveSessionCache();
                 
                 // 滚动回顶部
                 document.getElementById('songs-grid').scrollTop = 0;
@@ -1520,6 +1839,51 @@
                 const config = await res.json();
                 updateNeteaseUI(config.netease_cookie);
                 if (config.netease_cookie && config.netease_cookie.trim() !== '') {
+                    // 尝试从 sessionStorage 恢复缓存的歌曲列表
+                    const cachedSongs = sessionStorage.getItem('music_pipeline_all_songs');
+                    const cachedPlaylistId = sessionStorage.getItem('music_pipeline_active_playlist_id');
+                    const cachedMode = sessionStorage.getItem('music_pipeline_pagination_mode');
+                    const cachedPage = sessionStorage.getItem('music_pipeline_current_page');
+                    const cachedTotal = sessionStorage.getItem('music_pipeline_total_count');
+                    const cachedQuery = sessionStorage.getItem('music_pipeline_search_query');
+                    
+                    if (cachedSongs) {
+                        try {
+                            allSongs = JSON.parse(cachedSongs);
+                            activePlaylistId = cachedPlaylistId || 'daily_recommend';
+                            paginationMode = cachedMode || 'recommend';
+                            currentPage = cachedPage ? parseInt(cachedPage) : 0;
+                            totalCount = cachedTotal ? parseInt(cachedTotal) : 0;
+                            currentSearchQuery = cachedQuery || '';
+                            
+                            // 渲染 UI
+                            renderPlaylists();
+                            updateActionBar();
+                            renderSongs();
+                            
+                            // 更新标题/副标题与输入框
+                            if (paginationMode === 'search') {
+                                document.getElementById('page-subtitle').innerText = `🔍 搜索结果: "${currentSearchQuery}"`;
+                                document.getElementById('search-input').value = currentSearchQuery;
+                                document.getElementById('clear-search-btn').style.display = 'inline-block';
+                            } else if (paginationMode === 'playlist') {
+                                setTimeout(() => {
+                                    renderPlaylists();
+                                }, 50);
+                                document.getElementById('page-subtitle').innerText = `📂 歌单曲目`;
+                            } else {
+                                document.getElementById('page-subtitle').innerText = "今日推荐";
+                            }
+                            
+                            updatePaginationControls();
+                            document.getElementById('status-display').innerText = `已从本地缓存加载 ${allSongs.length} 首歌曲`;
+                            loadUploadFormats();
+                            return; // 成功恢复缓存，直接返回
+                        } catch (cacheErr) {
+                            console.error("恢复缓存失败", cacheErr);
+                        }
+                    }
+                    
                     fetchSongs();
                 }
             } catch (e) { }
@@ -1553,6 +1917,17 @@
             }
         }
         loadInitial();
+        startStatusPolling();
+
+        // 检查 url query 参数是否触发登录框
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('login') === '1') {
+            // 清理参数，以防刷新时重复开启
+            window.history.replaceState({}, document.title, window.location.pathname);
+            setTimeout(() => {
+                startNeteaseLogin();
+            }, 300);
+        }
 
         let neteaseLoginPolling = null;
         let isNeteaseChecking = false;
@@ -1637,10 +2012,10 @@
                 <p id="video-path" class="video-link"></p>
                 <p id="upload-info"></p>
             </div>
-            <div style="display:flex; gap:15px; margin-top:25px;">
-                <button class="btn-outline" onclick="closeModal()">关闭</button>
-                <button class="btn-primary" onclick="copyVideoPath()">复制路径</button>
-                <button id="open-upload-btn" class="btn-outline" style="display:none;" onclick="openUploadPage()">去投稿</button>
+            <div style="display:flex; gap:15px; margin-top:25px; justify-content: center; width: 100%;">
+                <button class="btn-outline" onclick="closeModal()" style="flex: 1; min-width: 90px;">关闭</button>
+                <button class="btn-primary" onclick="copyVideoPath()" style="flex: 1; min-width: 90px; width: auto;">复制路径</button>
+                <button id="open-upload-btn" class="btn-outline" style="display:none; flex: 1; min-width: 90px;" onclick="openUploadPage()">去投稿</button>
             </div>
         </div>
     </div>
