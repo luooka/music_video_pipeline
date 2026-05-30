@@ -5,9 +5,10 @@ import sys
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, File, UploadFile, Body
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, File, UploadFile, Body, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from main import PipelineProcessor, load_config, CONFIG_PATH
@@ -15,10 +16,23 @@ from bilibili_uploader import BilibiliUploader
 from bilibili_auth import BilibiliAuth
 from cleanup_manager import CleanupManager
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 启动异步后台任务队列 worker
+    task = asyncio.create_task(task_queue_worker())
+    yield
+    # 优雅取消后台任务
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
 app = FastAPI(
     title="Music Video Pipeline API",
     description="音乐视频自动化合成流水线后台服务。支持网易云推荐获取、视频异步合成、日志实时查询。",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # 挂载静态文件
@@ -26,6 +40,22 @@ if getattr(sys, 'frozen', False):
     static_dir = Path(sys._MEIPASS) / "static"
 else:
     static_dir = Path(__file__).parent / "static"
+
+@app.get("/static/logs.html", include_in_schema=False)
+async def redirect_logs(request: Request):
+    query_params = request.query_params
+    url = "/?page=monitor"
+    if query_params:
+        url += "&" + str(query_params)
+    return RedirectResponse(url=url)
+
+@app.get("/static/upload.html", include_in_schema=False)
+async def redirect_upload(request: Request):
+    query_params = request.query_params
+    url = "/?page=upload"
+    if query_params:
+        url += "&" + str(query_params)
+    return RedirectResponse(url=url)
 
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
@@ -140,6 +170,14 @@ def get_processor():
 def health():
     return {"status": "ok"}
 
+LAST_HEARTBEAT_TIME = time.time()
+
+@app.post("/heartbeat", summary="前端心跳包", tags=["基础接口"])
+async def receive_heartbeat():
+    global LAST_HEARTBEAT_TIME
+    LAST_HEARTBEAT_TIME = time.time()
+    return {"status": "ok"}
+
 @app.get("/config", summary="获取配置", tags=["配置管理"])
 def get_config():
     """读取 config.json 中的当前配置项"""
@@ -153,6 +191,10 @@ def update_config(data: ConfigUpdate):
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
     state.processor = PipelineProcessor(config)
+    try:
+        state.processor.cleanup_manager = CleanupManager(config)
+    except Exception:
+        pass
     return {"status": "success"}
 
 @app.get("/search", summary="搜索歌曲", tags=["音乐数据"])
@@ -194,10 +236,17 @@ async def get_playlist_tracks(id: int, limit: int = 20, offset: int = 0):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.on_event("startup")
-async def startup_event():
-    # 启动异步后台任务队列 worker
-    asyncio.create_task(task_queue_worker())
+@app.get("/netease/song-url", summary="获取歌曲播放 URL", tags=["音乐数据"])
+async def get_song_url(id: int):
+    """根据歌曲 ID 获取其试听的 CDN 播放链接"""
+    try:
+        proc = get_processor()
+        url = await proc.api.get_song_url(id)
+        if not url:
+            raise HTTPException(status_code=404, detail="未找到歌曲播放链接，可能为 VIP 或版权受限歌曲")
+        return {"url": url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 async def task_queue_worker():
     while True:
@@ -306,7 +355,7 @@ async def run_single_task(task: Task):
                             cover = ""
                             if fmt["cover"] == "first_song" and task.songs:
                                 first = task.songs[0]
-                                cover = str(run_dir / f"{first['id']}_cover.png")
+                                cover = str(run_dir / "images" / f"{first['id']}_cover.png")
                                 if not os.path.exists(cover):
                                     cover = ""
                             elif fmt["cover"] == "custom":
@@ -416,9 +465,8 @@ def delete_task(task_id: str):
 async def generate_by_query(req: QueryRequest):
     """
     AI 直接调用入口：输入歌名关键词，系统自动搜索最匹配的结果并直接开始视频合成。
+    任务将加入队列排队执行。
     """
-    if state.is_running:
-        raise HTTPException(status_code=400, detail="Pipeline is already running")
     
     try:
         proc = get_processor()
@@ -455,7 +503,7 @@ async def get_netease_qrcode():
         
         # 3. 生成二维码图片并保存
         qr_img = qrcode.make(qr_url)
-        qr_path = Path(__file__).parent / "static" / "netease_login_qr.png"
+        qr_path = static_dir / "netease_login_qr.png"
         qr_path.parent.mkdir(parents=True, exist_ok=True)
         qr_img.save(str(qr_path))
         
@@ -527,7 +575,7 @@ async def get_bilibili_qr():
         if res["success"]:
             # 将二维码图片复制到static目录以便前端访问
             qr_path = Path(res["qr_path"])
-            static_path = Path(__file__).parent / "static" / qr_path.name
+            static_path = static_dir / qr_path.name
             import shutil
             shutil.copy2(qr_path, static_path)
             return {
@@ -615,19 +663,26 @@ async def upload_to_bilibili(req: BilibiliUploadRequest):
     """调用 biliup 上传视频到 B 站音乐综合分区（tid=138）"""
     try:
         uploader = BilibiliUploader(load_config())
-        result = uploader.upload(
-            video_path=req.video_path,
-            title=req.title,
-            description=req.description,
-            tags=req.tags,
-            cover=req.cover
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            uploader.upload,
+            req.video_path,
+            req.title,
+            req.description,
+            req.tags,
+            138,
+            req.cover
         )
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # ================== 上传格式管理 ==================
-UPLOAD_FORMATS_FILE = Path(__file__).parent / "upload_formats.json"
+if getattr(sys, 'frozen', False):
+    UPLOAD_FORMATS_FILE = Path(sys.executable).parent / "upload_formats.json"
+else:
+    UPLOAD_FORMATS_FILE = Path(__file__).parent / "upload_formats.json"
 
 def load_upload_formats():
     if UPLOAD_FORMATS_FILE.exists():

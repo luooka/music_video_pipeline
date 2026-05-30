@@ -73,9 +73,10 @@ class CleanupManager:
         cutoff_time = time.time() - (self.max_age_days * 24 * 3600)
         
         try:
-            for root, dirs, files in os.walk(self.output_dir):
+            for root, dirs, files in os.walk(self.output_dir, topdown=False):
+                root_path = Path(root)
                 for file in files:
-                    file_path = Path(root) / file
+                    file_path = root_path / file
                     
                     # 跳过正在使用的文件
                     if self._is_file_in_use(file_path):
@@ -95,15 +96,14 @@ class CleanupManager:
                         logger.warning(f"无法处理文件 {file_path}: {e}")
                         stats["errors"] += 1
                 
-                # 清理空目录
-                for dir_name in dirs:
-                    dir_path = Path(root) / dir_name
+                # 如果当前目录不是根输出目录且它已经是空目录，则删除它
+                if root_path != self.output_dir:
                     try:
-                        if not any(dir_path.iterdir()):
-                            dir_path.rmdir()
-                            logger.debug(f"删除空目录: {dir_path}")
+                        if not any(root_path.iterdir()):
+                            root_path.rmdir()
+                            logger.debug(f"删除空目录: {root_path}")
                     except Exception:
-                        pass  # 目录非空，跳过
+                        pass  # 目录非空或删除失败，跳过
                         
         except Exception as e:
             logger.error(f"按年龄清理时出错: {e}")

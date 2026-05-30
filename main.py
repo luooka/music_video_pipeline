@@ -15,15 +15,6 @@ from cleanup_manager import setup_cleanup_scheduler
 
 import logging
 from logging.handlers import RotatingFileHandler
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stderr),
-        RotatingFileHandler('pipeline.log', maxBytes=5*1024*1024, backupCount=3, encoding='utf-8')
-    ]
-)
-logger = logging.getLogger('pipeline')
 
 # 控制台编码适配 - 使用局部包装器而非全局修改
 class ConsoleEncodingWrapper:
@@ -86,6 +77,18 @@ if getattr(sys, 'frozen', False):
 else:
     # 开发模式下
     CONFIG_PATH = Path(__file__).parent / "config.json"
+
+# 在 CONFIG_PATH 确定后初始化日志，确保日志文件始终写在 config.json 同级目录
+_log_path = CONFIG_PATH.parent / "pipeline.log"
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stderr),
+        RotatingFileHandler(str(_log_path), maxBytes=5*1024*1024, backupCount=3, encoding='utf-8')
+    ]
+)
+logger = logging.getLogger('pipeline')
 
 DEFAULT_CONFIG = {
     "netease_cookie": "",

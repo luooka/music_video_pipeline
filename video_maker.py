@@ -23,10 +23,7 @@ def _cleanup_ffmpeg_processes():
             try:
                 if proc.poll() is None:  # 进程还在运行
                     logger.info(f"终止残留FFmpeg进程 (PID: {proc.pid})")
-                    if os.name == 'nt':  # Windows
-                        proc.send_signal(signal.CTRL_BREAK_EVENT)
-                    else:  # Linux/Mac
-                        proc.send_signal(signal.SIGTERM)
+                    proc.terminate()
                     
                     # 等待进程结束
                     try:

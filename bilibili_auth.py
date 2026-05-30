@@ -8,7 +8,11 @@ from PIL import Image
 class BilibiliAuth:
     def __init__(self):
         # 使用绝对路径，确保在任何工作目录下都能准确找到 cookies
-        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        import sys
+        if getattr(sys, 'frozen', False):
+            self.base_dir = os.path.dirname(sys.executable)
+        else:
+            self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.cookie_path = os.path.join(self.base_dir, "cookies.json")
 
     def get_qr_info(self):
@@ -49,12 +53,13 @@ class BilibiliAuth:
             print(f"[BILIBILI-AUTH] 待验证凭证长度: {len(qr_json_str) if qr_json_str else 0}")
             print(f"[BILIBILI-AUTH] 凭证内容缩略: {qr_json_str[:150] if qr_json_str else 'None'}...")
             
-            # 先检查当前目录是否有旧cookies
-            if os.path.exists("cookies.json"):
-                print("[BILIBILI-AUTH] 当前目录发现旧 cookies.json，准备迁移...")
+            # 先检查当前工作目录是否有旧 cookies（仅当 CWD 与 base_dir 不同时才迁移）
+            cwd_cookie = os.path.join(os.getcwd(), "cookies.json")
+            if cwd_cookie != self.cookie_path and os.path.exists(cwd_cookie):
+                print("[BILIBILI-AUTH] 当前工作目录发现旧 cookies.json，准备迁移...")
                 try:
                     import shutil
-                    shutil.move("cookies.json", self.cookie_path)
+                    shutil.move(cwd_cookie, self.cookie_path)
                     print(f"[BILIBILI-AUTH] 旧 cookies.json 迁移成功 -> {self.cookie_path}")
                 except Exception as me:
                     print(f"[BILIBILI-AUTH] 迁移旧 cookies 失败: {me}")
@@ -81,10 +86,7 @@ class BilibiliAuth:
                                 elif hasattr(success, "__dict__"):
                                     json.dump(success.__dict__, f, indent=2, ensure_ascii=False)
                                 else:
-                                    # 尝试将其转换为 dict，或反序列化其文本表示
                                     try:
-                                        # 如果其 str(success) 本身已经是标准的 JSON 格式（如 Rust 打印的 Debug 格式）
-                                        # 我们先尝试解析成 dict，然后再标准格式化写入
                                         parsed = json.loads(str(success))
                                         json.dump(parsed, f, indent=2, ensure_ascii=False)
                                     except Exception:
@@ -96,17 +98,18 @@ class BilibiliAuth:
                 except Exception as we:
                     print(f"[BILIBILI-AUTH] 写入 cookies 文件失败: {we}")
                     return {"success": False, "error": f"保存cookies文件失败: {str(we)}"}
-            
-            # 最终确认文件存在
-            if os.path.exists(self.cookie_path):
-                print("[BILIBILI-AUTH] 校验成功！已生成有效的 cookies.json 凭证文件。")
-                return {"success": True, "status": "success"}
+                
+                # 最终确认文件存在
+                if os.path.exists(self.cookie_path):
+                    print("[BILIBILI-AUTH] 校验成功！已生成有效的 cookies.json 凭证文件。")
+                    return {"success": True, "status": "success"}
+                else:
+                    print("[BILIBILI-AUTH] 错误：在目标路径未发现 cookies.json")
+                    return {"success": False, "error": f"授权成功但cookies文件未生成在: {self.cookie_path}"}
             else:
-                print("[BILIBILI-AUTH] 错误：在目标路径未发现 cookies.json")
-                return {"success": False, "error": f"授权成功但cookies文件未生成在: {self.cookie_path}"}
-            
-            print("[BILIBILI-AUTH] 扫码失败或已超时。")
-            return {"success": False, "error": "扫码验证失败或已超时"}
+                # success 为 falsy，说明扫码失败或超时
+                print("[BILIBILI-AUTH] 扫码失败或已超时。")
+                return {"success": False, "error": "扫码验证失败或已超时"}
         except Exception as e:
             print(f"[BILIBILI-AUTH] 校验过程捕获异常: {e}")
             import traceback

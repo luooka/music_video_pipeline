@@ -29,7 +29,7 @@ class NeteaseAPI:
         _init_pyncm(cookie)
 
     async def _run_sync(self, func, *args, **kwargs):
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, partial(func, *args, **kwargs))
 
     async def get_daily_recommend(self) -> list:

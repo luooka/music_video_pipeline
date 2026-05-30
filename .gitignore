@@ -37,6 +37,7 @@ desktop.ini
 build/
 dist/
 *.spec
+!MusicVideoPipeline.spec
 
 # === 其他 ===
 *.bak
