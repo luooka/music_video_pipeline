@@ -1,4 +1,5 @@
-# 🎵 Music Video Pipeline (MVP)
+# 🎵 Music Video Pipeline(Vibe Coding)
+
 
 全自动音乐视频生成流水线 —— 从**网易云音乐**获取歌曲，自动合成带专业播放器 UI、动态律动频谱、同步歌词的 **1080P 视频**，支持一键上传至 **Bilibili**。
 
