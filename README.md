@@ -230,54 +230,6 @@ music_video_pipeline/
 | `/netease/qr/*` | GET/POST | 网易云扫码登录接口 |
 | `/bilibili/qr/*` | GET/POST | B站扫码登录接口 |
 
----
-
-## 📦 打包为 EXE
-
-项目已预配置好 PyInstaller 打包脚本，可以将整个程序（含 Python 运行时、所有依赖库、FFmpeg、前端页面）打包为一个**免安装的独立 `.exe` 文件**，在任何 Windows 电脑上双击即可运行。
-
-### 前置条件
-
-```bash
-pip install pyinstaller
-```
-
-### 一键打包
-
-```bash
-cd d:\code\music_video_pipeline
-pyinstaller --clean MusicVideoPipeline.spec
-```
-
-编译完成后，`dist/MusicVideoPipeline.exe` 就是最终产物（约 75 MB）。
-
-### 发布目录结构
-
-将以下文件放到同一个文件夹中，打成 `.zip` 即可发布：
-
-```
-MusicVideoPipeline-v1.x.x/
-├── MusicVideoPipeline.exe      # 主程序（从 dist/ 复制）
-├── config.template.json        # 配置模板（用户复制为 config.json）
-└── upload_formats.json         # 投稿格式预设
-```
-
-### 发布到 GitHub Releases
-
-1. 在仓库页面点击 **Releases → Create a new release**
-2. 填写版本标签（如 `v1.0.0`）和发布说明
-3. 将上面的 `.zip` 压缩包拖入附件区域
-4. 点击 **Publish release**
-
-### ⚠️ 打包注意事项
-
-- **重新编译前**必须先关闭正在运行的 `MusicVideoPipeline.exe`，否则 PyInstaller 会因文件锁定而报 `PermissionError`
-- 如果需要强制关闭：`taskkill /F /IM MusicVideoPipeline.exe`
-- 修改 Python 源码后只需重新运行 `pyinstaller --clean MusicVideoPipeline.spec`，无需其他操作
-- `.spec` 文件中已配置 `console=False`（无命令行黑窗）和 `datas=[('static', 'static')]`（自动打包前端页面）
-
----
-
 ## 🐛 常见问题
 
 | 问题 | 解决方案 |
