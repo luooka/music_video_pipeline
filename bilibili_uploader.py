@@ -1,15 +1,18 @@
+import logging
 import os
 import sys
-import json
 from pathlib import Path
+
+from bilibili_auth import BilibiliAuth
+
+logger = logging.getLogger('pipeline.bilibili_uploader')
+
 
 class BilibiliUploader:
     def __init__(self, config=None):
         self.config = config or {}
-        # B站分区 ID，默认 17 (音乐) 或 138 (音乐综合)
         self.default_tid = self.config.get("bilibili_tid", 138)
         self.default_tags = self.config.get("bilibili_tags", ["音乐", "网易云音乐", "动态歌词"])
-        # 使用与 bilibili_auth 相同的绝对路径，确保无缝读写 cookies.json
         if getattr(sys, 'frozen', False):
             self.base_dir = os.path.dirname(sys.executable)
         else:
@@ -17,54 +20,53 @@ class BilibiliUploader:
         self.cookie_file = os.path.join(self.base_dir, "cookies.json")
 
     def upload(self, video_path: str, title: str, description: str = "", tags: list = None, tid: int = None, cover: str = ""):
-        """
-        通过 stream-gears 的 Python 绑定直接上传视频到 B 站，无需依赖外部 biliup.exe 可执行文件。
-        """
-        if not os.path.exists(video_path):
+        """通过 stream-gears 的 Python 绑定直接上传视频到 B 站"""
+        if not video_path or not os.path.isfile(video_path):
             return {"success": False, "error": f"视频文件不存在: {video_path}"}
 
-        # 检查 stream-gears 是否安装
         if not self._check_biliup_installed():
             return {"success": False, "error": "stream-gears 库未安装。请运行: pip install stream-gears"}
 
-        # 检查 cookies 文件是否存在且不为空
-        if not os.path.exists(self.cookie_file) or os.path.getsize(self.cookie_file) == 0:
-            return {"success": False, "error": "尚未登录 B 站，请先在界面扫码登录。"}
+        auth = BilibiliAuth()
+        if not auth.is_cookie_valid():
+            return {"success": False, "error": "尚未登录 B 站或登录凭证无效，请先在界面扫码登录。"}
 
-        tags = tags or self.default_tags
+        raw_tags = tags if tags is not None else self.default_tags
+        if isinstance(raw_tags, str):
+            raw_tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+        clean_tags = [str(t).strip()[:20] for t in (raw_tags or []) if str(t).strip()][:10]
+        if not clean_tags:
+            clean_tags = [str(t).strip()[:20] for t in self.default_tags if str(t).strip()][:10] or ["音乐"]
+
         tid = tid or self.default_tid
         description = description or ""
-        
-        # 格式化 tag 为逗号分隔的字符串
-        tag_str = ",".join(tags) if isinstance(tags, list) else str(tags)
-        
-        # 构建新版描述结构 desc_v2
+        safe_title = (title or "网易云音乐推荐").strip()[:80] or "网易云音乐推荐"
+        tag_str = ",".join(clean_tags)
+
         desc_v2 = [{
             "raw_text": description,
             "biz_id": "",
             "type": 1
         }] if description else []
 
-        # 准备封面路径
-        cover_path = str(Path(cover).resolve()) if cover and os.path.exists(cover) else ""
+        cover_path = ""
+        if cover and str(cover).strip():
+            if os.path.isfile(cover):
+                cover_path = str(Path(cover).resolve())
+            else:
+                logger.warning(f"指定的封面文件不存在，将使用视频首帧: {cover}")
 
         try:
             import stream_gears
-            
-            # 使用 stream_gears 的原厂能力进行上传
-            # 传参说明:
-            # - video_path: 列表形式，支持多P
-            # - cookie_file: cookies 绝对路径
-            # - copyright: 1 为原创/自制，2 为转载
-            # - source: 转载来源，如果是自制通常传空字符串
-            print(f"[i] 正在使用 stream-gears 直传 B 站 (视频: {video_path})...")
-            stream_gears.upload(
+
+            logger.info(f"正在使用 stream-gears 直传 B 站 (视频: {video_path})...")
+            ret = stream_gears.upload(
                 video_path=[str(Path(video_path).resolve())],
                 cookie_file=self.cookie_file,
-                title=title[:80],
+                title=safe_title,
                 tid=tid,
                 tag=tag_str,
-                copyright=1, # 1 自制，2 转载
+                copyright=1,
                 source="",
                 desc=description,
                 dynamic="",
@@ -73,26 +75,27 @@ class BilibiliUploader:
                 lossless_music=0,
                 no_reprint=0,
                 open_elec=0,
-                limit=3, # 并发线程数
+                limit=3,
                 desc_v2=desc_v2
             )
-            print("[OK] 视频上传成功！")
-            return {"success": True}
+            logger.info("视频上传成功！")
+            resp = {"success": True}
+            if isinstance(ret, dict) and ret.get("bvid"):
+                resp["bvid"] = ret["bvid"]
+            return resp
         except Exception as e:
-            print(f"[FAIL] 视频上传失败: {e}")
+            logger.error(f"视频上传失败: {e}")
             return {"success": False, "error": f"上传失败: {e}"}
-    
+
     def _check_biliup_installed(self):
-        """检查 stream-gears 是否已正确安装"""
         try:
-            import stream_gears
+            import stream_gears  # noqa: F401
             return True
         except ImportError:
             return False
 
+
 if __name__ == "__main__":
-    # 简单测试入口
-    import sys
     if len(sys.argv) > 1:
         uploader = BilibiliUploader()
         res = uploader.upload(sys.argv[1], "测试投稿")

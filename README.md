@@ -164,10 +164,9 @@ music_video_pipeline/
 ├── start.bat               # Windows 一键启动脚本
 ├── force_kill.bat           # 进程清理脚本
 ├── static/                 # Web 前端页面
-│   ├── index.html          # 合成页（选曲主页）
-│   ├── login.html          # 网易云扫码登录页
-│   ├── logs.html           # 任务监控大盘页
-│   └── upload.html         # B站投稿页
+│   ├── index.html          # 单页 Web GUI（合成 / 监控 / 投稿）
+│   ├── styles.css          # 前端样式表
+│   └── app.js              # 前端交互逻辑
 └── output/                 # 生成的视频输出（按日期组织）
 ```
 
@@ -180,7 +179,7 @@ music_video_pipeline/
 ```jsonc
 {
   "netease_cookie": "",              // 通过 Web 界面扫码自动写入，无需手动填写
-  "netease_api_base": "http://localhost:3000",
+  "api_host": "127.0.0.1",           // 服务监听地址（仅本地访问）
   "api_port": 8000,                  // Web 服务端口
   "output_dir": "./output",          // 视频输出目录
   "video_width": 1920,               // 视频分辨率

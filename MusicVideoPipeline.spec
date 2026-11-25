@@ -1,11 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_data_files
 
+datas = [('static', 'static')]
+datas += collect_data_files('imageio_ffmpeg')
 
 a = Analysis(
     ['gui_client.py'],
     pathex=[],
     binaries=[],
-    datas=[('static', 'static')],
+    datas=datas,
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

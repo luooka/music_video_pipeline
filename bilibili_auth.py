@@ -1,126 +1,139 @@
-import stream_gears
-import qrcode
-import os
+import base64
 import json
+import logging
+import os
+import shutil
+import sys
+from io import BytesIO
 from pathlib import Path
-from PIL import Image
+
+import qrcode
+import stream_gears
+
+logger = logging.getLogger('pipeline.bilibili_auth')
+
 
 class BilibiliAuth:
     def __init__(self):
-        # 使用绝对路径，确保在任何工作目录下都能准确找到 cookies
-        import sys
         if getattr(sys, 'frozen', False):
             self.base_dir = os.path.dirname(sys.executable)
         else:
             self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.cookie_path = os.path.join(self.base_dir, "cookies.json")
 
-    def get_qr_info(self):
+    def is_cookie_valid(self) -> bool:
+        """检查 cookies.json 是否存在且为结构有效的凭证 JSON"""
+        try:
+            if not os.path.exists(self.cookie_path) or os.path.getsize(self.cookie_path) <= 10:
+                return False
+            with open(self.cookie_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict) or not data:
+                return False
+            # stream-gears / biliup cookies.json 通常包含 token_info 与 cookie_info
+            if data.get("token_info") or data.get("cookie_info"):
+                return True
+            return any(k in data for k in ("SESSDATA", "access_token", "bili_jct"))
+        except Exception:
+            return False
+
+    def get_qr_info(self, save_to_disk: bool = True):
         """
-        借调 stream_gears 原厂能力获取二维码信息
-        返回包含 url 和 auth_code 的原始 JSON 字符串，以及生成的本地图片路径
+        借调 stream_gears 获取二维码信息，返回 Data URI（可选落盘，供 CLI/MCP 使用）
         """
         try:
-            # 获取图片时也要确保路径正确
-            qr_path = os.path.join(self.base_dir, "bilibili_login_qr.png")
-            # 1. 直接获取 JSON 响应 (无需代理)
             raw_res = stream_gears.get_qrcode(None)
             data = json.loads(raw_res)
-            
+
             if data.get("code") == 0:
                 qr_url = data["data"]["url"]
-                
-                # 2. 生成本地二维码图片供用户扫码
                 qr_img = qrcode.make(qr_url)
-                qr_img.save(qr_path)
-                
-                return {
-                    "success": True, 
-                    "qr_path": os.path.abspath(qr_path),
-                    "raw_json": raw_res  # 将完整 JSON 存为凭证，后续校验需要原样传回
+
+                buf = BytesIO()
+                qr_img.save(buf, format="PNG")
+                b64_data = base64.b64encode(buf.getvalue()).decode("ascii")
+                result = {
+                    "success": True,
+                    "qr_data_uri": f"data:image/png;base64,{b64_data}",
+                    "raw_json": raw_res,
                 }
+
+                if save_to_disk:
+                    qr_path = os.path.join(self.base_dir, "bilibili_login_qr.png")
+                    tmp_qr = Path(qr_path).with_suffix(".tmp.png")
+                    tmp_qr.write_bytes(buf.getvalue())
+                    tmp_qr.replace(qr_path)
+                    result["qr_path"] = os.path.abspath(qr_path)
+
+                return result
             return {"success": False, "error": data.get("message", "获码失败")}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     def verify_login(self, qr_json_str):
         """
-        直接将原厂 JSON 传授给原厂校验函数
-        使用绝对路径确保 cookies.json 生成在正确位置
+        调用 stream_gears 校验扫码并原子写入 cookies.json
         """
         try:
-            print(f"\n[BILIBILI-AUTH] >>> 进入 verify_login 状态校验")
-            print(f"[BILIBILI-AUTH] 待验证凭证长度: {len(qr_json_str) if qr_json_str else 0}")
-            print(f"[BILIBILI-AUTH] 凭证内容缩略: {qr_json_str[:150] if qr_json_str else 'None'}...")
-            
-            # 先检查当前工作目录是否有旧 cookies（仅当 CWD 与 base_dir 不同时才迁移）
+            logger.info("[BILIBILI-AUTH] 开始调用 stream_gears.login_by_qrcode 等待扫码确认...")
+
             cwd_cookie = os.path.join(os.getcwd(), "cookies.json")
-            if cwd_cookie != self.cookie_path and os.path.exists(cwd_cookie):
-                print("[BILIBILI-AUTH] 当前工作目录发现旧 cookies.json，准备迁移...")
+            if os.path.abspath(cwd_cookie) != os.path.abspath(self.cookie_path) and os.path.exists(cwd_cookie):
                 try:
-                    import shutil
                     shutil.move(cwd_cookie, self.cookie_path)
-                    print(f"[BILIBILI-AUTH] 旧 cookies.json 迁移成功 -> {self.cookie_path}")
                 except Exception as me:
-                    print(f"[BILIBILI-AUTH] 迁移旧 cookies 失败: {me}")
-            
-            print("[BILIBILI-AUTH] 正在调用 stream_gears.login_by_qrcode (此步骤是阻塞长轮询)...")
+                    logger.warning(f"[BILIBILI-AUTH] 迁移旧 cookies 失败: {me}")
+
             success = stream_gears.login_by_qrcode(qr_json_str, None)
-            print(f"[BILIBILI-AUTH] stream_gears.login_by_qrcode 返回值已获取。")
-            
+
             if success:
-                # 将授权返回的 cookies 数据直接写入项目 cookies.json 路径
-                print(f"[BILIBILI-AUTH] 准备将登录结果写入 cookies 文件: {self.cookie_path}")
+                tmp_cookie = Path(self.cookie_path).with_suffix(".json.tmp")
                 try:
-                    import json
-                    with open(self.cookie_path, 'w', encoding='utf-8') as f:
+                    with open(tmp_cookie, 'w', encoding='utf-8') as f:
                         if isinstance(success, str):
                             f.write(success)
                         elif isinstance(success, dict):
                             json.dump(success, f, indent=2, ensure_ascii=False)
                         else:
-                            # 尝试处理特殊的 Rust/C 扩展对象
-                            try:
-                                if hasattr(success, "dict"):
-                                    json.dump(success.dict(), f, indent=2, ensure_ascii=False)
-                                elif hasattr(success, "__dict__"):
-                                    json.dump(success.__dict__, f, indent=2, ensure_ascii=False)
-                                else:
+                            if hasattr(success, "dict"):
+                                json.dump(success.dict(), f, indent=2, ensure_ascii=False)
+                            elif hasattr(success, "__dict__"):
+                                json.dump(success.__dict__, f, indent=2, ensure_ascii=False)
+                            else:
+                                try:
+                                    parsed = json.loads(str(success))
+                                    json.dump(parsed, f, indent=2, ensure_ascii=False)
+                                except Exception:
                                     try:
-                                        parsed = json.loads(str(success))
-                                        json.dump(parsed, f, indent=2, ensure_ascii=False)
-                                    except Exception:
                                         json.dump(dict(success), f, indent=2, ensure_ascii=False)
-                            except Exception:
-                                # 最后保底方案，直接写入其 str() 表示
-                                f.write(str(success))
-                    print("[BILIBILI-AUTH] cookies.json 文件写入成功！")
+                                    except Exception:
+                                        f.write(str(success))
+                    tmp_cookie.replace(self.cookie_path)
                 except Exception as we:
-                    print(f"[BILIBILI-AUTH] 写入 cookies 文件失败: {we}")
+                    if tmp_cookie.exists():
+                        try:
+                            tmp_cookie.unlink()
+                        except Exception:
+                            pass
                     return {"success": False, "error": f"保存cookies文件失败: {str(we)}"}
-                
-                # 最终确认文件存在
-                if os.path.exists(self.cookie_path):
-                    print("[BILIBILI-AUTH] 校验成功！已生成有效的 cookies.json 凭证文件。")
+
+                if self.is_cookie_valid():
+                    logger.info("[BILIBILI-AUTH] 校验成功！已生成 cookies.json")
                     return {"success": True, "status": "success"}
-                else:
-                    print("[BILIBILI-AUTH] 错误：在目标路径未发现 cookies.json")
-                    return {"success": False, "error": f"授权成功但cookies文件未生成在: {self.cookie_path}"}
+                if os.path.exists(self.cookie_path):
+                    return {"success": True, "status": "success"}
+                return {"success": False, "error": f"授权成功但cookies文件未生成在: {self.cookie_path}"}
             else:
-                # success 为 falsy，说明扫码失败或超时
-                print("[BILIBILI-AUTH] 扫码失败或已超时。")
                 return {"success": False, "error": "扫码验证失败或已超时"}
         except Exception as e:
-            print(f"[BILIBILI-AUTH] 校验过程捕获异常: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"[BILIBILI-AUTH] 校验过程捕获异常: {e}")
             return {"success": False, "error": str(e)}
+
 
 if __name__ == "__main__":
     auth = BilibiliAuth()
     res = auth.get_qr_info()
     if res["success"]:
-        print(f"二维码已准备就绪: {res['qr_path']}")
-        print(f"原始凭证: {res['raw_json']}")
+        print(f"二维码已准备就绪: {res.get('qr_path')}")
     else:
-        print(f"重构方案仍有问题: {res['error']}")
+        print(f"获取二维码失败: {res['error']}")

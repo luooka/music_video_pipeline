@@ -4,7 +4,7 @@
 [Setup]
 ; App Metadata
 AppName=Music Video Pipeline
-AppVersion=1.0.0
+AppVersion=1.1.0
 AppPublisher=luooka
 AppSupportURL=https://github.com/luooka/music_video_pipeline
 AppUpdatesURL=https://github.com/luooka/music_video_pipeline

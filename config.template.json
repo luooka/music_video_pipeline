@@ -1,7 +1,7 @@
 {
-  "netease_cookie": "YOUR_NETEASE_COOKIE_HERE",
-  "netease_api_base": "http://localhost:3000",
-  "api_port": 8003,
+  "netease_cookie": "",
+  "api_host": "127.0.0.1",
+  "api_port": 8000,
   "output_dir": "./output",
   "video_width": 1920,
   "video_height": 1080,
@@ -20,8 +20,7 @@
     "title_font_size": 70,
     "artist_font_size": 35,
     "text_x": 1050,
-    "text_start_y": 400,
-    "text_cached_y": 450
+    "title_start_y": 150
   },
   "video": {
     "threads": 1,
